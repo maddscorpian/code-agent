@@ -1,17 +1,25 @@
 from __future__ import annotations
 
 import json
+import logging
 from pathlib import Path
 from typing import Any
 
 import tiktoken
+
+logger = logging.getLogger(__name__)
 
 
 class Chunker:
     def __init__(self, root: str):
         self.root = Path(root)
         self.digests_dir = self.root / "digests"
-        self.encoder = tiktoken.get_encoding("cl100k_base")
+        self.encoder = None
+        try:
+            self.encoder = tiktoken.get_encoding("cl100k_base")
+        except Exception as exc:
+            # Keep indexing usable in strict corporate/offline environments.
+            logger.warning("tiktoken cl100k_base unavailable; using char-based chunking fallback: %s", exc)
 
     def build_chunks(self) -> list[dict]:
         chunks: list[dict] = []
@@ -72,18 +80,34 @@ class Chunker:
         return rows
 
     def _split_content(self, content: str, target_tokens: int = 500, overlap_tokens: int = 50) -> list[str]:
-        toks = self.encoder.encode(content)
-        if len(toks) <= 600:
+        if self.encoder is not None:
+            toks = self.encoder.encode(content)
+            if len(toks) <= 600:
+                return [content]
+            chunks = []
+            start = 0
+            while start < len(toks):
+                end = min(start + target_tokens, len(toks))
+                chunk_toks = toks[start:end]
+                chunks.append(self.encoder.decode(chunk_toks))
+                if end == len(toks):
+                    break
+                start = max(0, end - overlap_tokens)
+            return chunks
+
+        # Approximate token size fallback: ~4 chars/token.
+        target_chars = target_tokens * 4
+        overlap_chars = overlap_tokens * 4
+        if len(content) <= int(600 * 4):
             return [content]
         chunks = []
         start = 0
-        while start < len(toks):
-            end = min(start + target_tokens, len(toks))
-            chunk_toks = toks[start:end]
-            chunks.append(self.encoder.decode(chunk_toks))
-            if end == len(toks):
+        while start < len(content):
+            end = min(start + target_chars, len(content))
+            chunks.append(content[start:end])
+            if end == len(content):
                 break
-            start = max(0, end - overlap_tokens)
+            start = max(0, end - overlap_chars)
         return chunks
 
     @staticmethod

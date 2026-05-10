@@ -57,7 +57,7 @@ export class ChatPanel {
     const htmlPath = vscode.Uri.file(`${this.context.extensionPath}/media/chat.html`);
     const cssPath = vscode.Uri.file(`${this.context.extensionPath}/media/chat.css`);
     let html = fs.readFileSync(htmlPath.fsPath, "utf8");
-    html = html.replaceAll("{{styleUri}}", this.panel.webview.asWebviewUri(cssPath).toString());
+    html = html.split("{{styleUri}}").join(this.panel.webview.asWebviewUri(cssPath).toString());
     return (
       html +
       `

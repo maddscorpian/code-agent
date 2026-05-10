@@ -45,7 +45,41 @@ Default values are usually fine. Edit `.env` only if needed.
 
 ---
 
-## 5) Pull required Ollama models
+## 5) Install and start Ollama (Homebrew)
+
+If you installed Ollama with Homebrew, use the following:
+
+```bash
+brew install ollama
+```
+
+Start Ollama as a background service:
+
+```bash
+brew services start ollama
+```
+
+Confirm service status:
+
+```bash
+brew services list | rg ollama
+```
+
+Quick connectivity check:
+
+```bash
+ollama list
+```
+
+If you do not want a background service, you can run it manually in a terminal:
+
+```bash
+ollama serve
+```
+
+---
+
+## 6) Pull required Ollama models
 
 ```bash
 ollama pull deepseek-coder-v2
@@ -60,7 +94,7 @@ ollama list
 
 ---
 
-## 6) Update project paths in `projects.yaml`
+## 7) Update project paths in `projects.yaml`
 
 Edit `projects.yaml` and set real absolute paths for:
 
@@ -74,7 +108,7 @@ Supported service types:
 
 ---
 
-## 7) Run first full digest
+## 8) Run first full digest
 
 ```bash
 python -m digest.digest_runner
@@ -87,7 +121,7 @@ Expected:
 
 ---
 
-## 8) Start API server
+## 9) Start API server
 
 ```bash
 python -m uvicorn api.server:app --port 8765 --reload
@@ -97,7 +131,7 @@ Use `python -m uvicorn` to ensure correct virtual environment is used.
 
 ---
 
-## 9) Build embeddings and vector DB (first index)
+## 10) Build embeddings and vector DB (first index)
 
 Open a second terminal, activate venv, then run:
 
@@ -116,7 +150,7 @@ This will:
 
 ---
 
-## 10) Health check
+## 11) Health check
 
 ```bash
 curl http://localhost:8765/health
@@ -129,7 +163,7 @@ Look for:
 
 ---
 
-## 11) Quick API test
+## 12) Quick API test
 
 ```bash
 curl -X POST http://localhost:8765/ask \
@@ -139,7 +173,7 @@ curl -X POST http://localhost:8765/ask \
 
 ---
 
-## 12) Setup VS Code extension
+## 13) Setup VS Code extension
 
 ```bash
 cd vscode-extension
@@ -179,7 +213,14 @@ Use commands:
 
 ### `/health` shows `ollama: false`
 
-- Start Ollama daemon/app
+- If using Homebrew service, restart it:
+  ```bash
+  brew services restart ollama
+  ```
+- Or run directly:
+  ```bash
+  ollama serve
+  ```
 - Verify:
   ```bash
   ollama list
