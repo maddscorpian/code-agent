@@ -1,0 +1,27 @@
+<!doctype html>
+<html>
+  <head>
+    <meta charset="UTF-8" />
+    <meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src {{styleUri}} https: 'unsafe-inline'; script-src 'unsafe-inline' https:;">
+    <link rel="stylesheet" href="{{styleUri}}" />
+    <title>Local AI Agent</title>
+  </head>
+  <body>
+    <div class="header">
+      <div>Local AI Agent</div>
+      <div id="healthDot" class="dot red"></div>
+    </div>
+    <div class="tabs">
+      <button data-mode="chat">Chat</button>
+      <button data-mode="generate">Generate</button>
+      <button data-mode="impact">Impact</button>
+    </div>
+    <div id="messages" class="messages"></div>
+    <div class="controls">
+      <label><input id="attachFile" type="checkbox" /> Attach current file</label>
+      <textarea id="input" placeholder="Ask about your codebase..."></textarea>
+      <button id="sendBtn">Send</button>
+    </div>
+    <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
+  </body>
+</html>

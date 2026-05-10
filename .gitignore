@@ -1,0 +1,45 @@
+# Python cache/build
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+build/
+dist/
+*.egg-info/
+
+# Virtual environments
+.venv/
+venv/
+env/
+
+# Environment and secrets
+.env
+.env.*
+!.env.example
+
+# Local outputs
+vector_db/
+digests/*.digest.json
+
+# Logs
+*.log
+
+# VS Code extension dependencies/build
+vscode-extension/node_modules/
+vscode-extension/out/
+vscode-extension/.vscode-test/
+
+# IDE/editor
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# OS files
+.DS_Store
+Thumbs.db

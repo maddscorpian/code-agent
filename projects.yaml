@@ -1,0 +1,25 @@
+workspace: /home/user/projects
+
+projects:
+  frontend:
+    - name: fe-app
+      type: angular
+      path: /home/user/projects/fe-app
+
+  services:
+    - name: user-service
+      type: spring-boot
+      path: /home/user/projects/user-service
+      port: 8081
+    - name: order-service
+      type: spring-boot
+      path: /home/user/projects/order-service
+      port: 8082
+    - name: payment-service
+      type: spring-boot
+      path: /home/user/projects/payment-service
+      port: 8083
+    - name: api-gateway
+      type: spring-boot
+      path: /home/user/projects/api-gateway
+      port: 8080

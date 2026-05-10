@@ -1,0 +1,12 @@
+body { font-family: sans-serif; margin: 0; padding: 0; }
+.header { display: flex; justify-content: space-between; padding: 8px 12px; background: #1f1f1f; color: #fff; }
+.dot { width: 10px; height: 10px; border-radius: 50%; margin-top: 4px; }
+.green { background: #16a34a; }
+.red { background: #dc2626; }
+.tabs { display: flex; gap: 8px; padding: 8px; }
+.messages { padding: 10px; height: 55vh; overflow-y: auto; border-top: 1px solid #333; border-bottom: 1px solid #333; }
+.msg { padding: 8px; margin-bottom: 8px; border-radius: 8px; }
+.user { background: #263238; }
+.ai { background: #1b5e20; }
+.controls { display: flex; flex-direction: column; gap: 8px; padding: 8px; }
+textarea { width: 100%; min-height: 90px; }

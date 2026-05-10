@@ -1,0 +1,45 @@
+{
+  "name": "local-ai-agent",
+  "displayName": "Local AI Agent",
+  "description": "Project-specific AI assistant powered by local LLM",
+  "version": "0.1.0",
+  "engines": { "vscode": "^1.85.0" },
+  "categories": ["AI", "Other"],
+  "activationEvents": ["onStartupFinished"],
+  "main": "./out/extension.js",
+  "contributes": {
+    "commands": [
+      { "command": "localai.openChat", "title": "Local AI: Open Chat" },
+      { "command": "localai.explainSelection", "title": "Local AI: Explain This" },
+      { "command": "localai.generateChange", "title": "Local AI: Generate Change" },
+      { "command": "localai.impactAnalysis", "title": "Local AI: Impact Analysis" },
+      { "command": "localai.reindex", "title": "Local AI: Re-index Codebase" }
+    ],
+    "menus": {
+      "editor/context": [
+        { "command": "localai.explainSelection", "when": "editorHasSelection" },
+        { "command": "localai.generateChange" },
+        { "command": "localai.impactAnalysis", "when": "editorHasSelection" }
+      ]
+    },
+    "viewsContainers": {
+      "activitybar": [
+        { "id": "localai-sidebar", "title": "Local AI Agent", "icon": "media/icon.svg" }
+      ]
+    },
+    "views": {
+      "localai-sidebar": [
+        { "type": "webview", "id": "localai.chatView", "name": "Chat" }
+      ]
+    }
+  },
+  "scripts": {
+    "compile": "tsc -p ./",
+    "watch": "tsc -watch -p ./"
+  },
+  "devDependencies": {
+    "@types/node": "^20.0.0",
+    "@types/vscode": "^1.85.0",
+    "typescript": "^5.0.0"
+  }
+}
