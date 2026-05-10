@@ -4,7 +4,8 @@ import os
 from collections.abc import Iterator
 
 from dotenv import load_dotenv
-from langchain_ollama import OllamaEmbeddings, OllamaLLM
+from langchain_community.embeddings import OllamaEmbeddings
+from langchain_community.llms import Ollama
 
 from .prompts import PROMPT_CODE_GENERATION, PROMPT_CODE_QA, PROMPT_IMPACT_ANALYSIS, SYSTEM_PROMPT_BASE
 from embeddings.vector_store import VectorStore
@@ -16,7 +17,7 @@ class RAGChain:
         self.model = os.getenv("OLLAMA_MODEL", "deepseek-coder-v2")
         self.embed_model = os.getenv("OLLAMA_EMBED_MODEL", "nomic-embed-text")
         self.base_url = os.getenv("OLLAMA_HOST", "http://localhost:11434")
-        self.llm = OllamaLLM(model=self.model, base_url=self.base_url)
+        self.llm = Ollama(model=self.model, base_url=self.base_url)
         self.embeddings = OllamaEmbeddings(model=self.embed_model, base_url=self.base_url)
         self.store = VectorStore(os.getenv("CHROMA_PATH", "./vector_db"))
 

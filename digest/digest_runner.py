@@ -61,14 +61,22 @@ class DigestRunner:
         p = self.loader.get_project(project_name)
         if not p:
             raise ValueError(f"Unknown project: {project_name}")
-        if p.type == "spring-boot":
+        normalized_type = self._normalize_project_type(p.type)
+        if normalized_type == "spring-boot":
             digest = SpringBootParser(p.path).parse()
-        elif p.type == "angular":
+        elif normalized_type == "angular":
             digest = AngularParser(p.path).parse()
         else:
-            raise ValueError(f"Unsupported type: {p.type}")
+            raise ValueError(f"Unsupported type: {p.type}. Supported: angular, spring-boot (aliases: maven, gradle, spring, springboot)")
         self._write_json(self.output_dir / f"{p.name}.digest.json", digest.model_dump())
         return digest
+
+    @staticmethod
+    def _normalize_project_type(project_type: str) -> str:
+        t = (project_type or "").strip().lower()
+        if t in {"spring-boot", "springboot", "spring", "maven", "gradle"}:
+            return "spring-boot"
+        return t
 
     def _rebuild_master_from_disk(self):
         service_digests = []
