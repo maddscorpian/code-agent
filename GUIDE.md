@@ -279,6 +279,7 @@ DIGESTS_PATH=./digests
 PROJECTS_CONFIG=./projects.yaml
 API_PORT=8765
 LOG_LEVEL=INFO
+TIKTOKEN_CACHE_DIR=./tiktoken_cache
 ```
 
 **Only change these if necessary:**
