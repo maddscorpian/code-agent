@@ -2,9 +2,15 @@ from __future__ import annotations
 
 import json
 import logging
+import os
 import re
 from pathlib import Path
 from typing import Any
+
+from dotenv import load_dotenv
+
+load_dotenv()   # ensure TIKTOKEN_CACHE_DIR (and other vars) are in os.environ
+                # before tiktoken tries to resolve its cache path
 
 logger = logging.getLogger(__name__)
 
@@ -18,7 +24,7 @@ class Chunker:
             import tiktoken
             self.encoder = tiktoken.get_encoding("cl100k_base")
         except Exception as exc:
-            logger.warning("tiktoken cl100k_base unavailable; using char-based fallback: %s", exc)
+            logger.warning("tiktoken unavailable; using char-based chunking fallback: %s", exc)
 
     def build_chunks(self) -> list[dict]:
         chunks: list[dict] = []
