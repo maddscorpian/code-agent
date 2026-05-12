@@ -1,0 +1,223 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Local AI Agent Chat</title>
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/github-dark.min.css">
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/marked/9.1.6/marked.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js"></script>
+    <style>
+      body { font-family: Inter, Arial, sans-serif; margin: 0; background: #0f172a; color: #e2e8f0; }
+      .wrap { max-width: 980px; margin: 0 auto; padding: 16px; }
+      h1 { font-size: 20px; margin: 0 0 4px; }
+      .sub { color: #94a3b8; margin-bottom: 16px; }
+      .panel { border: 1px solid #334155; border-radius: 10px; background: #111827; }
+      .toolbar { padding: 10px; border-bottom: 1px solid #334155; display: flex; gap: 8px; align-items: center; }
+      .messages { height: 60vh; overflow: auto; padding: 16px; display: flex; flex-direction: column; gap: 12px; }
+      .msg { padding: 12px 16px; border-radius: 10px; line-height: 1.6; font-size: 14px; max-width: 100%; word-break: break-word; }
+      .user { background: #1d4ed8; align-self: flex-end; max-width: 80%; white-space: pre-wrap; }
+      .ai {
+        background: #1e293b;
+        border: 1px solid #334155;
+        align-self: flex-start;
+        width: 100%;
+        color: #e2e8f0;
+      }
+      /* markdown content inside AI messages */
+      .ai p { margin: 0 0 10px; }
+      .ai p:last-child { margin-bottom: 0; }
+      .ai h1,.ai h2,.ai h3,.ai h4 { margin: 14px 0 6px; color: #f1f5f9; font-weight: 600; }
+      .ai h1 { font-size: 18px; } .ai h2 { font-size: 16px; } .ai h3 { font-size: 14px; }
+      .ai ul, .ai ol { margin: 6px 0 10px 20px; padding: 0; }
+      .ai li { margin: 4px 0; }
+      .ai code {
+        font-family: 'Fira Code', 'Cascadia Code', Consolas, monospace;
+        font-size: 13px;
+        background: #0f172a;
+        border: 1px solid #334155;
+        border-radius: 4px;
+        padding: 1px 5px;
+        color: #93c5fd;
+      }
+      .ai pre {
+        background: #0d1117;
+        border: 1px solid #30363d;
+        border-radius: 8px;
+        padding: 14px;
+        overflow-x: auto;
+        margin: 10px 0;
+      }
+      .ai pre code {
+        background: none;
+        border: none;
+        padding: 0;
+        color: inherit;
+        font-size: 13px;
+      }
+      .ai blockquote {
+        border-left: 3px solid #475569;
+        margin: 8px 0;
+        padding: 4px 12px;
+        color: #94a3b8;
+      }
+      .ai table { border-collapse: collapse; width: 100%; margin: 10px 0; font-size: 13px; }
+      .ai th, .ai td { border: 1px solid #334155; padding: 6px 10px; text-align: left; }
+      .ai th { background: #1e293b; color: #cbd5e1; }
+      .ai tr:nth-child(even) td { background: #162032; }
+      .ai strong { color: #f1f5f9; }
+      .ai em { color: #cbd5e1; }
+      .ai a { color: #60a5fa; }
+      .ai hr { border: none; border-top: 1px solid #334155; margin: 12px 0; }
+      .controls { padding: 10px; border-top: 1px solid #334155; display: grid; gap: 8px; }
+      textarea { width: 100%; min-height: 100px; border-radius: 8px; border: 1px solid #334155; background: #0b1220; color: #e2e8f0; padding: 10px; box-sizing: border-box; resize: vertical; }
+      button, select { border: 1px solid #334155; background: #1e293b; color: #e2e8f0; border-radius: 8px; padding: 8px 10px; cursor: pointer; }
+      button:hover { background: #293548; }
+      .row { display: flex; gap: 8px; align-items: center; }
+      .status { font-size: 12px; color: #93c5fd; }
+      .hint { font-size: 12px; color: #94a3b8; }
+      .label { font-size: 11px; color: #64748b; margin-bottom: 3px; }
+    </style>
+  </head>
+  <body>
+    <div class="wrap">
+      <h1>Local AI Agent Chat</h1>
+      <div class="sub">Simple browser chat for your local API (no VS Code extension required).</div>
+      <div class="panel">
+        <div class="toolbar">
+          <label for="mode">Mode:</label>
+          <select id="mode">
+            <option value="chat">chat</option>
+            <option value="deep">deep</option>
+            <option value="generate">generate</option>
+            <option value="impact">impact</option>
+          </select>
+          <button id="healthBtn" type="button">Check Health</button>
+          <span id="status" class="status"></span>
+        </div>
+        <div id="messages" class="messages"></div>
+        <div class="controls">
+          <textarea id="input" placeholder="Ask about your codebase..."></textarea>
+          <div class="row">
+            <button id="sendBtn" type="button">Send</button>
+            <button id="reindexBtn" type="button">Reindex</button>
+            <span class="hint">Streaming uses `/ask/stream`; fallback uses `/ask`.</span>
+          </div>
+        </div>
+      </div>
+    </div>
+    <script>
+      const messages = document.getElementById("messages");
+      const input = document.getElementById("input");
+      const mode = document.getElementById("mode");
+      const statusEl = document.getElementById("status");
+
+      marked.setOptions({
+        highlight: (code, lang) => {
+          if (lang && hljs.getLanguage(lang)) {
+            return hljs.highlight(code, { language: lang }).value;
+          }
+          return hljs.highlightAuto(code).value;
+        },
+        breaks: true,
+        gfm: true,
+      });
+
+      function renderMarkdown(text) {
+        return marked.parse(text);
+      }
+
+      function addMsg(kind, text) {
+        const div = document.createElement("div");
+        div.className = `msg ${kind}`;
+        if (kind === "ai") {
+          div.innerHTML = renderMarkdown(text || "");
+        } else {
+          div.textContent = text;
+        }
+        messages.appendChild(div);
+        messages.scrollTop = messages.scrollHeight;
+        return div;
+      }
+
+      function updateAiMsg(div, fullText) {
+        div.innerHTML = renderMarkdown(fullText);
+        messages.scrollTop = messages.scrollHeight;
+      }
+
+      async function askStream(question, selectedMode) {
+        const res = await fetch("/ask/stream", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ question, mode: selectedMode }),
+        });
+        if (!res.ok || !res.body) throw new Error(`HTTP ${res.status}`);
+
+        const ai = addMsg("ai", "");
+        const reader = res.body.getReader();
+        const decoder = new TextDecoder();
+        let buffer = "";
+        let fullText = "";
+        while (true) {
+          const { value, done } = await reader.read();
+          if (done) break;
+          buffer += decoder.decode(value, { stream: true });
+          const events = buffer.split("\n\n");
+          buffer = events.pop() || "";
+          for (const ev of events) {
+            if (ev.startsWith("data: ")) fullText += ev.slice(6);
+          }
+          updateAiMsg(ai, fullText);
+        }
+        updateAiMsg(ai, fullText);
+      }
+
+      async function askFallback(question, selectedMode) {
+        const res = await fetch("/ask", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ question, mode: selectedMode }),
+        });
+        const data = await res.json();
+        addMsg("ai", data.answer || JSON.stringify(data));
+      }
+
+      document.getElementById("sendBtn").addEventListener("click", async () => {
+        const q = input.value.trim();
+        if (!q) return;
+        addMsg("user", q);
+        input.value = "";
+        statusEl.textContent = "thinking...";
+        try {
+          await askStream(q, mode.value);
+          statusEl.textContent = "done";
+        } catch (e) {
+          statusEl.textContent = "stream failed, using fallback";
+          try {
+            await askFallback(q, mode.value);
+            statusEl.textContent = "done";
+          } catch (err) {
+            statusEl.textContent = `error: ${err.message || err}`;
+          }
+        }
+      });
+
+      document.getElementById("healthBtn").addEventListener("click", async () => {
+        const res = await fetch("/health");
+        const data = await res.json();
+        statusEl.textContent = `health=${data.status} ollama=${data.ollama} chroma=${data.chromadb} model=${data.model}`;
+      });
+
+      document.getElementById("reindexBtn").addEventListener("click", async () => {
+        statusEl.textContent = "reindexing...";
+        const res = await fetch("/reindex", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({}),
+        });
+        const data = await res.json();
+        statusEl.textContent = `reindexed ${data.projects_indexed?.length || 0} project(s), chunks=${data.chunks_created}`;
+      });
+    </script>
+  </body>
+</html>
