@@ -247,7 +247,7 @@ ollama list
 ```bash
 cd local-ai-agent        # the cloned repo root
 
-python3 -m venv .venv
+python3.11 -m venv .venv
 
 # macOS / Linux
 source .venv/bin/activate
@@ -333,6 +333,7 @@ projects:
 
 ```bash
 uvicorn api.server:app --host 0.0.0.0 --port 8765 --reload
+python -m uvicorn api.server:app --port 8765 --reload
 ```
 
 Expected output:
@@ -351,6 +352,10 @@ This is the indexing step. It parses your code, builds the knowledge graph, embe
 
 ```bash
 curl -X POST http://localhost:8765/reindex
+
+curl -X POST http://localhost:8765/reindex \
+  -H "Content-Type: application/json" \
+  -d "{}"
 ```
 
 This single command runs the full pipeline:
