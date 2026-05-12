@@ -23,7 +23,26 @@
         align-self: flex-start;
         width: 100%;
         color: #e2e8f0;
+        position: relative;
       }
+      .copy-response-btn {
+        position: absolute;
+        top: 8px;
+        right: 8px;
+        font-size: 11px;
+        padding: 3px 9px;
+        border-radius: 4px;
+        border: 1px solid #334155;
+        background: #0f172a;
+        color: #64748b;
+        cursor: pointer;
+        opacity: 0;
+        transition: opacity 0.15s, color 0.15s;
+        white-space: nowrap;
+      }
+      .ai:hover .copy-response-btn { opacity: 1; }
+      .copy-response-btn:hover { color: #e2e8f0; border-color: #475569; background: #1e293b; }
+      .copy-response-btn.copied { color: #4ade80; border-color: #166534; opacity: 1; }
       .plan-strip {
         font-size: 11px; color: #64748b; margin-bottom: 8px;
         padding: 4px 8px; background: #0f172a; border-radius: 4px;
@@ -189,12 +208,35 @@
         div.className = `msg ${kind}`;
         if (kind === "ai") {
           div.innerHTML = renderMarkdown(text || "");
+          if (text) attachCopyResponseBtn(div, text);
         } else {
           div.textContent = text;
         }
         messages.appendChild(div);
         messages.scrollTop = messages.scrollHeight;
         return div;
+      }
+
+      function attachCopyResponseBtn(div, rawText) {
+        let btn = div.querySelector(".copy-response-btn");
+        if (!btn) {
+          btn = document.createElement("button");
+          btn.className = "copy-response-btn";
+          btn.title = "Copy full response";
+          btn.textContent = "Copy response";
+          div.appendChild(btn);
+        }
+        // Always refresh the stored text so mid-stream copies get the latest content
+        btn.onclick = () => {
+          navigator.clipboard.writeText(rawText).then(() => {
+            btn.textContent = "✓ Copied";
+            btn.classList.add("copied");
+            setTimeout(() => {
+              btn.textContent = "Copy response";
+              btn.classList.remove("copied");
+            }, 1800);
+          }).catch(() => {});
+        };
       }
 
       function escHtml(str) {
@@ -288,6 +330,7 @@
         const strip = div.querySelector(".plan-strip");
         div.innerHTML = renderMarkdown(fullText);
         if (strip) div.prepend(strip);
+        attachCopyResponseBtn(div, fullText);
         postProcessCodeBlocks(div);
         messages.scrollTop = messages.scrollHeight;
       }
