@@ -24,6 +24,7 @@ class Chunker:
         chunks: list[dict] = []
         chunks.extend(self._digest_chunks())
         chunks.extend(self._code_chunks())
+        chunks.extend(self._graph_chunks())
         return chunks
 
     # ------------------------------------------------------------------
@@ -178,6 +179,71 @@ class Chunker:
                     rows.append(self._chunk_dict("master", str(file), 1, f"API contracts:\n{contract_text}", {
                         "source": "digest", "project": "master", "type": "api_contracts", "name": "contracts",
                     }))
+
+        return rows
+
+    # ------------------------------------------------------------------
+    # Graph relationship chunks (Phase 2)
+    # ------------------------------------------------------------------
+
+    def _graph_chunks(self) -> list[dict]:
+        """
+        Create retrieval-friendly chunks from the knowledge graph.
+        Each chunk describes outgoing relationships from one node so that
+        questions like 'what calls Order?' can surface the answer via RAG.
+        """
+        graph_path = self.root / "graph" / "knowledge_graph.json"
+        if not graph_path.exists():
+            return []
+
+        try:
+            data = json.loads(graph_path.read_text(encoding="utf-8"))
+        except Exception:
+            return []
+
+        nodes: dict[str, dict] = data.get("nodes", {})
+        edges: list[dict] = data.get("edges", [])
+
+        # Group edges by source node
+        from collections import defaultdict
+        out_edges: dict[str, list[dict]] = defaultdict(list)
+        in_edges: dict[str, list[dict]] = defaultdict(list)
+        for edge in edges:
+            out_edges[edge["from"]].append(edge)
+            in_edges[edge["to"]].append(edge)
+
+        rows: list[dict] = []
+
+        for nid, node in nodes.items():
+            project = node.get("project", "master")
+            name = node.get("name", nid)
+            label = node.get("label", nid)
+
+            # Outgoing relationships
+            outs = out_edges.get(nid, [])
+            ins = in_edges.get(nid, [])
+            if not outs and not ins:
+                continue
+
+            lines = [f"Knowledge graph: {label}"]
+            for edge in outs[:12]:
+                target = nodes.get(edge["to"], {})
+                lines.append(f"  --[{edge['type']}]--> {target.get('label', edge['to'])}")
+            for edge in ins[:8]:
+                src = nodes.get(edge["from"], {})
+                lines.append(f"  <--[{edge['type']}]-- {src.get('label', edge['from'])}")
+
+            rows.append(self._chunk_dict(
+                project,
+                "graph/knowledge_graph.json",
+                abs(hash(nid)) % (10 ** 9),
+                "\n".join(lines),
+                {
+                    "source": "graph", "project": project,
+                    "type": f"graph_{node.get('type', 'node')}",
+                    "name": name, "class_name": name,
+                },
+            ))
 
         return rows
 

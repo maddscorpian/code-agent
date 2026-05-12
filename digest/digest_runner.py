@@ -12,6 +12,9 @@ from .springboot_parser import SpringBootParser
 
 logger = logging.getLogger(__name__)
 
+GRAPH_DIR = Path(__file__).resolve().parents[1] / "graph"
+GRAPH_FILE = GRAPH_DIR / "knowledge_graph.json"
+
 
 class DigestRunner:
     def __init__(self, config_path: str):
@@ -42,6 +45,7 @@ class DigestRunner:
                 logger.exception("Failed parsing %s: %s", project.name, exc)
 
         self._write_master(service_digests, angular_digest)
+        self._build_graph()
         print(
             f"projects parsed={stats['projects']} endpoints={stats['endpoints']} entities={stats['entities']}"
         )
@@ -49,6 +53,7 @@ class DigestRunner:
     def run_single(self, project_name: str):
         self._run_project(project_name)
         self._rebuild_master_from_disk()
+        self._build_graph()
 
     def run_incremental(self, changed_file: str):
         owner = self.loader.resolve_owner(changed_file)
@@ -97,6 +102,20 @@ class DigestRunner:
     def _write_master(self, service_digests, angular_digest):
         master = MasterDigestBuilder(service_digests, angular_digest).build()
         self._write_json(self.output_dir / "master.digest.json", master.model_dump())
+
+    def _build_graph(self) -> None:
+        try:
+            from graph.graph_builder import GraphBuilder
+            GRAPH_DIR.mkdir(parents=True, exist_ok=True)
+            graph = GraphBuilder(str(self.output_dir)).build()
+            self._write_json(GRAPH_FILE, graph)
+            logger.info(
+                "Knowledge graph built: %d nodes, %d edges",
+                graph["stats"]["nodes"],
+                graph["stats"]["edges"],
+            )
+        except Exception as exc:
+            logger.warning("Graph build failed (non-fatal): %s", exc)
 
     @staticmethod
     def _write_json(path: Path, payload: dict):

@@ -15,6 +15,7 @@ from fastapi.responses import FileResponse, StreamingResponse
 from agent.agent_core import AgentCore
 from agent.rag_chain import RAGChain
 from agent.session_store import SessionStore
+from graph.graph_store import GraphStore
 from api.middleware import request_logger
 from api.schemas import AskRequest, AskResponse, DigestResponse, ReindexRequest, ReindexResponse, SourceReference
 from digest.digest_runner import DigestRunner
@@ -38,6 +39,7 @@ app.add_middleware(
 
 agent_core = AgentCore()
 session_store = SessionStore()
+graph_store = GraphStore(str(ROOT / "graph" / "knowledge_graph.json"))
 runner = DigestRunner(os.getenv("PROJECTS_CONFIG", str(ROOT / "projects.yaml")))
 store = VectorStore(os.getenv("CHROMA_PATH", "./vector_db"))
 embedder = Embedder()
@@ -126,6 +128,13 @@ def reindex(req: ReindexRequest):
     chunks = Chunker(str(ROOT)).build_chunks()
     embedded = embedder.embed_chunks(chunks)
     store.upsert(embedded)
+    # Reload the graph store singleton and the tools graph cache after reindex
+    graph_store.load()
+    try:
+        from agent.tools import _reload_graph
+        _reload_graph()
+    except Exception:
+        pass
     return ReindexResponse(
         status="ok",
         projects_indexed=projects,
@@ -172,6 +181,45 @@ def health():
         "chromadb": chroma_ok,
         "model": os.getenv("OLLAMA_MODEL", "deepseek-coder-v2"),
     }
+
+
+@app.get("/graph")
+def graph_data():
+    """Return the full knowledge graph JSON for visualization or inspection."""
+    graph_file = ROOT / "graph" / "knowledge_graph.json"
+    if not graph_file.exists():
+        return {"error": "Graph not built yet. Run /reindex first.", "nodes": {}, "edges": []}
+    return json.loads(graph_file.read_text(encoding="utf-8"))
+
+
+@app.get("/graph/summary")
+def graph_summary():
+    """Return a human-readable summary of the knowledge graph."""
+    return {"summary": graph_store.summary(), "stats": graph_store.stats()}
+
+
+@app.get("/graph/trace")
+def graph_trace(q: str = ""):
+    """Trace a request path through the graph. ?q=/api/orders or ?q=GET /api/orders"""
+    if not q:
+        return {"error": "Provide ?q=<endpoint_path>"}
+    return {"result": graph_store.trace_request(q)}
+
+
+@app.get("/graph/callers")
+def graph_callers(q: str = ""):
+    """Find callers of a node. ?q=OrderService or ?q=/api/orders"""
+    if not q:
+        return {"error": "Provide ?q=<class_or_path>"}
+    return {"result": graph_store.find_callers(q)}
+
+
+@app.get("/graph/impact")
+def graph_impact(q: str = ""):
+    """BFS impact analysis. ?q=Order or ?q=OrderService"""
+    if not q:
+        return {"error": "Provide ?q=<class_or_entity_name>"}
+    return {"result": graph_store.impact_graph(q)}
 
 
 @app.get("/projects")
