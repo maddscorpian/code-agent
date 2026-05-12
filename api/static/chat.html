@@ -24,6 +24,17 @@
         width: 100%;
         color: #e2e8f0;
       }
+      .plan-strip {
+        font-size: 11px; color: #64748b; margin-bottom: 8px;
+        padding: 4px 8px; background: #0f172a; border-radius: 4px;
+        border-left: 2px solid #334155;
+      }
+      .plan-strip strong { color: #475569; }
+      .plan-strip .tool-tag {
+        display: inline-block; background: #1e293b; border: 1px solid #334155;
+        border-radius: 3px; padding: 0 4px; margin: 1px 2px; color: #60a5fa;
+      }
+      .thinking { color: #475569; font-style: italic; font-size: 13px; }
       /* markdown content inside AI messages */
       .ai p { margin: 0 0 10px; }
       .ai p:last-child { margin-bottom: 0; }
@@ -147,7 +158,10 @@
       }
 
       function updateAiMsg(div, fullText) {
+        // Preserve plan strip if present
+        const strip = div.querySelector(".plan-strip");
         div.innerHTML = renderMarkdown(fullText);
+        if (strip) div.prepend(strip);
         messages.scrollTop = messages.scrollHeight;
       }
 
@@ -162,6 +176,20 @@
         return { type: evType, data: evData };
       }
 
+      function showPlanStrip(aiDiv, planData) {
+        // Render the planning strip above the answer text
+        let strip = aiDiv.querySelector(".plan-strip");
+        if (!strip) {
+          strip = document.createElement("div");
+          strip.className = "plan-strip";
+          aiDiv.prepend(strip);
+        }
+        const tools = (planData.tools || [])
+          .map(t => `<span class="tool-tag">${t}</span>`).join(" ");
+        const reasoning = planData.reasoning || "";
+        strip.innerHTML = `<strong>Gathered via:</strong> ${tools}${reasoning ? ` — ${reasoning}` : ""}`;
+      }
+
       async function askStream(question, selectedMode) {
         const res = await fetch("/ask/stream", {
           method: "POST",
@@ -171,10 +199,14 @@
         if (!res.ok || !res.body) throw new Error(`HTTP ${res.status}`);
 
         const ai = addMsg("ai", "");
+        // Show a "planning…" placeholder immediately
+        ai.innerHTML = '<span class="thinking">Planning…</span>';
+
         const reader = res.body.getReader();
         const decoder = new TextDecoder();
         let buffer = "";
         let fullText = "";
+        let planReceived = false;
 
         while (true) {
           const { value, done } = await reader.read();
@@ -189,9 +221,23 @@
               sessionId = data;
               localStorage.setItem("chat_session_id", sessionId);
               updateSessionBadge();
+            } else if (type === "plan") {
+              planReceived = true;
+              try {
+                const planData = JSON.parse(data);
+                // Clear placeholder, show plan strip
+                ai.innerHTML = "";
+                showPlanStrip(ai, planData);
+                statusEl.textContent = `gathering context (${(planData.tools || []).length} tools)…`;
+              } catch (_) { /* ignore parse errors */ }
             } else if (type === "done") {
               // stream finished
             } else if (data) {
+              if (!planReceived) {
+                // Fallback path (no plan event) — clear placeholder on first token
+                ai.innerHTML = "";
+                planReceived = true;
+              }
               fullText += data;
               updateAiMsg(ai, fullText);
             }

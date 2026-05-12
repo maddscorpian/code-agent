@@ -179,6 +179,24 @@ def graph_summary(_: str = "") -> str:
 # Tool registry
 # ------------------------------------------------------------------
 
+def build_tools_map() -> dict:
+    """Plain dict of tool_name → callable — used by AgentLoop (no langchain dependency)."""
+    return {
+        "search_codebase": search_codebase,
+        "search_by_project": search_by_project,
+        "get_all_endpoints": get_all_endpoints,
+        "get_api_contracts": get_api_contracts,
+        "get_service_dependencies": get_service_dependencies,
+        "get_entity_schema": get_entity_schema,
+        "read_source_file": read_source_file,
+        "get_auth_flow": get_auth_flow,
+        "trace_request": trace_request,
+        "find_callers": find_callers,
+        "impact_graph": impact_graph,
+        "graph_summary": graph_summary,
+    }
+
+
 def build_tools() -> list[Tool]:
     return [
         # Vector search

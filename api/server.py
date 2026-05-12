@@ -13,7 +13,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, StreamingResponse
 
 from agent.agent_core import AgentCore
-from agent.rag_chain import RAGChain
+from agent.loop import _PLAN_SENTINEL, _PLAN_SENTINEL_END
 from agent.session_store import SessionStore
 from graph.graph_store import GraphStore
 from api.middleware import request_logger
@@ -90,17 +90,19 @@ def ask_stream(req: AskRequest):
     history = session.get_recent()
 
     def event_stream():
-        # Send session_id first so the client can persist it immediately
         yield f"event: session\ndata: {session.session_id}\n\n"
 
-        rag = RAGChain()
         tokens: list[str] = []
         try:
-            for token in rag.stream_ask(req.question, mode, req.file_context, history=history):
-                tokens.append(token)
-                yield f"data: {token}\n\n"
+            for chunk in agent_core.stream_run(req.question, mode, req.file_context, history):
+                # Intercept plan sentinel emitted by AgentLoop before synthesis tokens
+                if chunk.startswith(_PLAN_SENTINEL) and _PLAN_SENTINEL_END in chunk:
+                    plan_json = chunk[len(_PLAN_SENTINEL): chunk.index(_PLAN_SENTINEL_END)]
+                    yield f"event: plan\ndata: {plan_json}\n\n"
+                else:
+                    tokens.append(chunk)
+                    yield f"data: {chunk}\n\n"
         finally:
-            # Save to session regardless of whether stream completes cleanly
             full_answer = "".join(tokens)
             if full_answer:
                 session_store.add_turn(session.session_id, req.question, full_answer)
