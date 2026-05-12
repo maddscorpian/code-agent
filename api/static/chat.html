@@ -54,10 +54,10 @@
       .ai pre {
         background: #0d1117;
         border: 1px solid #30363d;
-        border-radius: 8px;
+        border-radius: 0 0 8px 8px;
         padding: 14px;
         overflow-x: auto;
-        margin: 10px 0;
+        margin: 0;
       }
       .ai pre code {
         background: none;
@@ -66,6 +66,46 @@
         color: inherit;
         font-size: 13px;
       }
+      /* Code block container wraps toolbar + pre */
+      .code-block-wrap {
+        border: 1px solid #30363d;
+        border-radius: 8px;
+        overflow: hidden;
+        margin: 10px 0;
+      }
+      .code-toolbar {
+        display: flex;
+        align-items: center;
+        gap: 6px;
+        padding: 5px 10px;
+        background: #161b22;
+        border-bottom: 1px solid #30363d;
+        min-height: 30px;
+      }
+      .code-file-path {
+        flex: 1;
+        font-size: 11px;
+        color: #60a5fa;
+        font-family: 'Fira Code', Consolas, monospace;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+      }
+      .code-action-btn {
+        font-size: 11px;
+        padding: 2px 8px;
+        border-radius: 4px;
+        border: 1px solid #334155;
+        background: #1e293b;
+        color: #cbd5e1;
+        cursor: pointer;
+        flex-shrink: 0;
+      }
+      .code-action-btn:hover { background: #293548; }
+      .code-action-btn.apply-btn { border-color: #1e40af; color: #93c5fd; }
+      .code-action-btn.apply-btn:hover { background: #1e3a5f; }
+      .code-action-btn.applied { color: #4ade80; border-color: #166534; }
+      .code-action-btn.failed  { color: #f87171; border-color: #7f1d1d; }
       .ai blockquote {
         border-left: 3px solid #475569;
         margin: 8px 0;
@@ -157,11 +197,98 @@
         return div;
       }
 
+      function escHtml(str) {
+        return str.replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;");
+      }
+
+      function postProcessCodeBlocks(div) {
+        div.querySelectorAll("pre").forEach(pre => {
+          if (pre.closest(".code-block-wrap")) return;  // already processed
+          const code = pre.querySelector("code");
+          if (!code) return;
+
+          const isDiff = code.className.includes("language-diff");
+          const rawText = code.textContent;
+
+          // Wrap pre in a container
+          const wrap = document.createElement("div");
+          wrap.className = "code-block-wrap";
+          pre.parentNode.insertBefore(wrap, pre);
+          wrap.appendChild(pre);
+
+          // Build toolbar
+          const toolbar = document.createElement("div");
+          toolbar.className = "code-toolbar";
+
+          if (isDiff) {
+            const pathMatch = rawText.match(/^\+\+\+\s+(?:b\/)?(.+)/m);
+            const filePath = pathMatch ? pathMatch[1].trim() : null;
+            if (filePath) {
+              const pathSpan = document.createElement("span");
+              pathSpan.className = "code-file-path";
+              pathSpan.textContent = filePath;
+              toolbar.appendChild(pathSpan);
+
+              const applyBtn = document.createElement("button");
+              applyBtn.className = "code-action-btn apply-btn";
+              applyBtn.textContent = "Apply";
+              applyBtn.addEventListener("click", () => applyDiff(applyBtn, rawText));
+              toolbar.appendChild(applyBtn);
+            }
+          }
+
+          const copyBtn = document.createElement("button");
+          copyBtn.className = "code-action-btn copy-btn";
+          copyBtn.textContent = "Copy";
+          copyBtn.addEventListener("click", () => {
+            navigator.clipboard.writeText(rawText).then(() => {
+              copyBtn.textContent = "Copied!";
+              setTimeout(() => { copyBtn.textContent = "Copy"; }, 1500);
+            }).catch(() => {
+              copyBtn.textContent = "Copy";
+            });
+          });
+          toolbar.appendChild(copyBtn);
+
+          wrap.insertBefore(toolbar, pre);
+        });
+      }
+
+      async function applyDiff(btn, diffText) {
+        btn.textContent = "Applying…";
+        btn.disabled = true;
+        try {
+          const res = await fetch("/apply", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ diff: diffText }),
+          });
+          const data = await res.json();
+          if (data.status === "ok") {
+            btn.textContent = "✓ Applied";
+            btn.classList.add("applied");
+            const files = [...(data.files_modified||[]), ...(data.files_created||[])];
+            if (files.length) statusEl.textContent = `Applied to: ${files.join(", ")}`;
+          } else {
+            btn.textContent = "✗ Failed";
+            btn.classList.add("failed");
+            btn.disabled = false;
+            statusEl.textContent = `Apply error: ${data.error || "unknown"}`;
+            console.error("Apply error:", data.error);
+          }
+        } catch (e) {
+          btn.textContent = "Apply";
+          btn.disabled = false;
+          statusEl.textContent = `Network error: ${e.message}`;
+        }
+      }
+
       function updateAiMsg(div, fullText) {
         // Preserve plan strip if present
         const strip = div.querySelector(".plan-strip");
         div.innerHTML = renderMarkdown(fullText);
         if (strip) div.prepend(strip);
+        postProcessCodeBlocks(div);
         messages.scrollTop = messages.scrollHeight;
       }
 

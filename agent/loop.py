@@ -37,13 +37,32 @@ Always cite specific artifacts. Do not guess.\
 """,
 
     "generate": """\
-Produce implementation-ready output:
-1. All files that must change (full relative paths)
-2. For each file: exact code (show before/after diffs for modifications)
-3. Any new files to create with complete content
-4. Downstream services or Angular components impacted
-5. Any DB migration (Flyway SQL) needed
-Follow the exact code style, annotation patterns, and naming conventions seen in the gathered context.\
+Produce implementation-ready output. Use EXACTLY this structure so the output can be applied automatically:
+
+For each file to MODIFY (existing file — add/change methods, fields, annotations):
+  ### FILE: <relative-path-from-project-root> [MODIFY]
+  ```diff
+  --- a/<relative-path>
+  +++ b/<relative-path>
+  @@ -<old-line>,<old-count> +<new-line>,<new-count> @@
+   <3 context lines before change>
+  -<line being removed>
+  +<line being added>
+   <3 context lines after change>
+  ```
+
+For each NEW file to CREATE:
+  ### FILE: <relative-path-from-project-root> [CREATE]
+  ```<java|typescript|sql>
+  <complete file content>
+  ```
+
+Rules:
+- Use the exact package names, imports, annotations, and naming from the gathered context
+- Include at least 3 context lines (space-prefixed) around each diff hunk
+- Generate a matching test class in src/test/… for any new service/controller method
+- After all FILE sections, add a short ## Impact summary listing downstream services/components
+- For any new endpoint: also add the matching Flyway migration if a new column or table is needed\
 """,
 
     "impact": """\

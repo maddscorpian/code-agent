@@ -17,7 +17,7 @@ from agent.loop import _PLAN_SENTINEL, _PLAN_SENTINEL_END
 from agent.session_store import SessionStore
 from graph.graph_store import GraphStore
 from api.middleware import request_logger
-from api.schemas import AskRequest, AskResponse, DigestResponse, ReindexRequest, ReindexResponse, SourceReference
+from api.schemas import AskRequest, AskResponse, ApplyRequest, ApplyResponse, DigestResponse, ReindexRequest, ReindexResponse, SourceReference
 from digest.digest_runner import DigestRunner
 from digest.project_loader import ProjectLoader
 from embeddings.chunker import Chunker
@@ -183,6 +183,69 @@ def health():
         "chromadb": chroma_ok,
         "model": os.getenv("OLLAMA_MODEL", "deepseek-coder-v2"),
     }
+
+
+@app.post("/apply", response_model=ApplyResponse)
+def apply_diff(req: ApplyRequest):
+    """
+    Apply a unified diff (or multi-file patch) to the registered codebases.
+    All target paths are validated against registered project roots before writing.
+    """
+    from agent.code_gen import apply_raw_diff
+
+    allowed_roots = [Path(p.path).resolve() for p in loader.list_projects()]
+
+    # Optional project root hint
+    project_root: Path | None = None
+    if req.project:
+        for p in loader.list_projects():
+            if p.name == req.project:
+                project_root = Path(p.path).resolve()
+                break
+
+    ok, message, modified_paths = apply_raw_diff(req.diff, allowed_roots, project_root)
+
+    files_modified = [p for p in modified_paths]
+    files_created: list[str] = []
+
+    if ok:
+        return ApplyResponse(
+            status="ok",
+            files_modified=files_modified,
+            files_created=files_created,
+        )
+    return ApplyResponse(status="error", error=message)
+
+
+@app.post("/apply/file", response_model=ApplyResponse)
+def apply_file(body: dict):
+    """
+    Create or overwrite a single file. Expects {path, content, project?}.
+    Used when the LLM generates a complete new file rather than a diff.
+    """
+    from agent.code_gen import FileChange, apply_change
+
+    path = body.get("path", "")
+    content = body.get("content", "")
+    project_hint = body.get("project")
+
+    if not path or not content:
+        return ApplyResponse(status="error", error="Both 'path' and 'content' are required")
+
+    allowed_roots = [Path(p.path).resolve() for p in loader.list_projects()]
+    project_root: Path | None = None
+    if project_hint:
+        for p in loader.list_projects():
+            if p.name == project_hint:
+                project_root = Path(p.path).resolve()
+                break
+
+    change = FileChange(action="create", path=path, content=content)
+    ok, message = apply_change(change, allowed_roots, project_root)
+
+    if ok:
+        return ApplyResponse(status="ok", files_created=[path])
+    return ApplyResponse(status="error", error=message)
 
 
 @app.get("/graph")
