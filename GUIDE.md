@@ -10,7 +10,7 @@ No cloud required. All LLM calls, embeddings, and vector storage run on your mac
 1. [What This System Does](#1-what-this-system-does)
 2. [System Architecture](#2-system-architecture)
 3. [Key Modules](#3-key-modules)
-4. [New System Setup](#4-new-system-setup)
+4. [Setting Up on a New System](#4-setting-up-on-a-new-system)
 5. [Configuration](#5-configuration)
 6. [Running the System](#6-running-the-system)
 7. [First-Time Indexing](#7-first-time-indexing)
@@ -185,7 +185,9 @@ User question
 
 ---
 
-## 4. New System Setup
+## 4. Setting Up on a New System
+
+> These steps assume you have already cloned the repository. Follow them in order — each step depends on the previous one.
 
 ### Prerequisites
 
@@ -193,60 +195,80 @@ User question
 |---|---|---|
 | Python | 3.11+ | 3.12 also works |
 | Ollama | latest | [ollama.com](https://ollama.com) |
-| Node.js | 18+ | Only needed if building VS Code extension |
-| `patch` | system | Pre-installed on macOS/Linux; needed by `/apply` |
+| `patch` | system | Pre-installed on macOS/Linux; required by the `/apply` endpoint |
+| Node.js | 18+ | Only needed if building the VS Code extension |
+
+---
 
 ### Step 1 — Install Ollama
 
+**macOS:**
 ```bash
-# macOS
 brew install ollama
+```
 
-# Linux
+**Linux:**
+```bash
 curl -fsSL https://ollama.com/install.sh | sh
+```
 
-# Start the Ollama daemon
+Start the Ollama daemon — keep this running in its own terminal for the entire session:
+```bash
 ollama serve
 ```
 
-### Step 2 — Pull Required Models
+---
+
+### Step 2 — Pull the Required Models
 
 ```bash
-# LLM for code generation and Q&A (large but best quality)
+# Main LLM — used for planning, Q&A, and code generation (~9 GB)
 ollama pull deepseek-coder-v2
 
-# Embedding model (small, fast)
+# Embedding model — used to vectorise code chunks (~274 MB)
 ollama pull nomic-embed-text
 
-# Verify both are available
+# Confirm both downloaded successfully
 ollama list
 ```
 
-> **Alternative models** if you have limited VRAM:
-> - `ollama pull codellama:13b` — lighter than deepseek-coder-v2
-> - `ollama pull qwen2.5-coder:7b` — good quality, faster
-> Update `OLLAMA_MODEL` in `.env` to match.
+> **Low VRAM / slow machine?** Use a lighter model instead:
+> ```bash
+> ollama pull qwen2.5-coder:7b    # ~4 GB, good quality
+> # or
+> ollama pull codellama:13b        # ~8 GB
+> ```
+> Then set `OLLAMA_MODEL=qwen2.5-coder:7b` in your `.env` (Step 4).
 
-### Step 3 — Clone and Install Python Dependencies
+---
+
+### Step 3 — Create the Python Virtual Environment
 
 ```bash
-git clone <repo-url>
-cd local-ai-agent
+cd local-ai-agent        # the cloned repo root
 
 python3 -m venv .venv
-source .venv/bin/activate          # macOS/Linux
-# .venv\Scripts\activate           # Windows
+
+# macOS / Linux
+source .venv/bin/activate
+
+# Windows
+.venv\Scripts\activate
 
 pip install -r requirements.txt
 ```
 
-### Step 4 — Configure Environment
+All subsequent commands assume the virtual environment is active.
+
+---
+
+### Step 4 — Create the `.env` File
 
 ```bash
 cp .env.example .env
 ```
 
-Edit `.env`:
+Open `.env` and review each value. The defaults work for a standard local setup:
 
 ```env
 OLLAMA_HOST=http://localhost:11434
@@ -259,41 +281,170 @@ API_PORT=8765
 LOG_LEVEL=INFO
 ```
 
-### Step 5 — Register Your Projects
+**Only change these if necessary:**
 
-Edit `projects.yaml` — add every project the agent should understand:
+| Variable | When to change |
+|---|---|
+| `OLLAMA_HOST` | Ollama is running on a different machine — set to `http://<ip>:11434` |
+| `OLLAMA_MODEL` | You pulled a lighter model in Step 2 — set to its name |
+| `API_PORT` | Port 8765 is already in use on this machine |
+
+> **Do not change `OLLAMA_EMBED_MODEL` after running your first index.** Vectors are tied to the embedding model — switching models requires deleting `vector_db/` and re-indexing from scratch.
+
+---
+
+### Step 5 — Register Your Projects in `projects.yaml`
+
+Open `projects.yaml` and replace the placeholder paths with the **absolute paths** to your actual codebases on this machine:
 
 ```yaml
-workspace: /absolute/path/to/your/workspace
+workspace: /Users/yourname/projects    # informational only, not used by code
 
 projects:
   frontend:
-    - name: fe-app
+    - name: fe-app                     # short unique identifier (no spaces)
       type: angular
-      path: /absolute/path/to/fe-app
+      path: /Users/yourname/projects/fe-app   # ← absolute path, must exist
 
   services:
     - name: user-service
       type: spring-boot
-      path: /absolute/path/to/user-service
-      port: 8081
+      path: /Users/yourname/projects/user-service
 
     - name: order-service
       type: spring-boot
-      path: /absolute/path/to/order-service
-      port: 8082
+      path: /Users/yourname/projects/order-service
 
     - name: api-gateway
       type: spring-boot
-      path: /absolute/path/to/api-gateway
-      port: 8080
+      path: /Users/yourname/projects/api-gateway
+      port: 8080                       # optional, informational only
 ```
 
-**Supported `type` values:**
-- Angular: `angular`
-- Spring Boot: `spring-boot`, `spring`, `maven`, `gradle`, `springboot`
+**Rules:**
+- `name` — used internally in tool calls and digest filenames; keep it short with no spaces
+- `type` — `angular` for Angular; `spring-boot` (also accepts `spring`, `maven`, `gradle`) for Spring Boot
+- `path` — must be an **absolute** path that **exists on disk**; relative paths will not work
+- Add or remove service entries to match exactly what you have
 
-> **Important:** Use absolute paths. Relative paths will not work.
+---
+
+### Step 6 — Start the API Server
+
+```bash
+uvicorn api.server:app --host 0.0.0.0 --port 8765 --reload
+```
+
+Expected output:
+```
+INFO:     Uvicorn running on http://0.0.0.0:8765
+INFO:     Application startup complete.
+```
+
+Leave this running. Open a new terminal for the next steps.
+
+---
+
+### Step 7 — Build Digests, Graph, and Embeddings
+
+This is the indexing step. It parses your code, builds the knowledge graph, embeds everything, and stores it in ChromaDB. **Must be done before the agent can answer any questions.**
+
+```bash
+curl -X POST http://localhost:8765/reindex
+```
+
+This single command runs the full pipeline:
+1. Parses every registered project (Spring Boot + Angular) into structured JSON digests
+2. Builds the cross-service knowledge graph
+3. Chunks all digest data + source code + graph relationships
+4. Embeds each chunk using `nomic-embed-text`
+5. Stores vectors in ChromaDB
+
+Wait for the response — it can take **2–15 minutes** depending on codebase size:
+
+```json
+{
+  "status": "ok",
+  "projects_indexed": ["fe-app", "user-service", "order-service"],
+  "chunks_created": 3842,
+  "duration_ms": 47231
+}
+```
+
+> If the command times out, the server is still running the index in the background. Check `/health` after a minute.
+
+---
+
+### Step 8 — Verify Everything is Working
+
+Run these checks in order:
+
+```bash
+# 1. Ollama and ChromaDB must both show true
+curl http://localhost:8765/health
+```
+```json
+{"status":"ok","ollama":true,"chromadb":true,"model":"deepseek-coder-v2"}
+```
+
+```bash
+# 2. All registered projects should show exists=true
+curl http://localhost:8765/projects
+```
+```json
+[
+  {"name":"fe-app","type":"angular","path":"/Users/...","exists":true},
+  {"name":"user-service","type":"spring-boot","path":"/Users/...","exists":true}
+]
+```
+
+```bash
+# 3. Digest summary — confirms parsing ran successfully
+curl http://localhost:8765/digest
+```
+```json
+{"projects":["fe-app","user-service","order-service"],"total_endpoints":42,"total_entities":15,...}
+```
+
+```bash
+# 4. Knowledge graph — confirms graph was built
+curl http://localhost:8765/graph/summary
+```
+```json
+{"summary":"Knowledge Graph: 87 nodes, 134 edges\n...","stats":{"nodes":87,"edges":134}}
+```
+
+If any check fails, see [Section 12 — Troubleshooting](#12-troubleshooting).
+
+---
+
+### Step 9 — Test the Chat
+
+Open the browser UI at `http://localhost:8765/chat` and run these test questions to confirm each part of the system is working:
+
+| What to ask | What it tests |
+|---|---|
+| `What services are in this system?` | Basic RAG — vector search + LLM responding |
+| `How does GET /api/orders work?` | Knowledge graph — trace from Angular to DB |
+| `What breaks if I change the User entity?` | Graph BFS — impact_graph tool |
+| `Add a health check endpoint to user-service` | Generate mode — diff output with Apply button |
+| Ask anything, then follow up with `Now explain the service layer for that` | Session memory — multi-turn conversation |
+
+All five should return relevant, codebase-specific answers. If they return generic responses, the index is empty — re-run Step 7.
+
+---
+
+### Quick Troubleshooting
+
+| Problem | Fix |
+|---|---|
+| `"ollama": false` in health check | Run `ollama serve` and confirm `ollama list` shows both models |
+| `"chromadb": false` in health check | Run `curl -X POST http://localhost:8765/reindex` |
+| `"exists": false` for a project | The path in `projects.yaml` is wrong for this machine — fix the absolute path |
+| Weak or irrelevant answers | Index is stale — re-run `curl -X POST http://localhost:8765/reindex` |
+| `graph not built` message in chat | Re-run reindex; graph builds as part of the pipeline |
+| Port 8765 in use | Start with `--port 9000` and open `http://localhost:9000/chat` |
+| Model too slow / out of memory | Pull `qwen2.5-coder:7b`, set `OLLAMA_MODEL=qwen2.5-coder:7b` in `.env`, restart server |
 
 ---
 
