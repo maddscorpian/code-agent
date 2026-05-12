@@ -14,6 +14,7 @@ class EndpointDigest(BaseModel):
     response_dto: Optional[str] = None
     auth_required: bool = False
     roles: list[str] = Field(default_factory=list)
+    javadoc: str = ""
 
 
 class EntityDigest(BaseModel):
@@ -34,10 +35,30 @@ class EventDigest(BaseModel):
     consumes: list[str] = Field(default_factory=list)
 
 
+class BeanDigest(BaseModel):
+    name: str
+    bean_type: str  # service | repository | component | configuration | advice
+    file_path: str
+    dependencies: list[str] = Field(default_factory=list)
+    methods: list[str] = Field(default_factory=list)
+    transactional_methods: list[str] = Field(default_factory=list)
+
+
+class ScheduledTaskDigest(BaseModel):
+    class_name: str
+    method: str
+    schedule: str
+
+
+class ExceptionHandlerDigest(BaseModel):
+    advice_class: str
+    handled_exceptions: list[str] = Field(default_factory=list)
+
+
 class ServiceDigest(BaseModel):
     project: str
     type: str
-    digest_version: str = "1.0"
+    digest_version: str = "2.0"
     created_at: str
     endpoints: list[EndpointDigest] = Field(default_factory=list)
     entities: list[EntityDigest] = Field(default_factory=list)
@@ -45,6 +66,11 @@ class ServiceDigest(BaseModel):
     feign_clients: list[FeignClientDigest] = Field(default_factory=list)
     events: EventDigest = Field(default_factory=EventDigest)
     security_config: dict = Field(default_factory=dict)
+    beans: list[BeanDigest] = Field(default_factory=list)
+    exception_handlers: list[ExceptionHandlerDigest] = Field(default_factory=list)
+    scheduled_tasks: list[ScheduledTaskDigest] = Field(default_factory=list)
+    build_dependencies: list[str] = Field(default_factory=list)
+    db_migrations: list[str] = Field(default_factory=list)
 
 
 class AngularComponentDigest(BaseModel):
@@ -54,6 +80,7 @@ class AngularComponentDigest(BaseModel):
     inputs: list[str] = Field(default_factory=list)
     outputs: list[str] = Field(default_factory=list)
     injected_services: list[str] = Field(default_factory=list)
+    template_events: list[str] = Field(default_factory=list)
 
 
 class AngularServiceDigest(BaseModel):
@@ -63,10 +90,17 @@ class AngularServiceDigest(BaseModel):
     injected_dependencies: list[str] = Field(default_factory=list)
 
 
+class NgRxFeature(BaseModel):
+    name: str
+    actions: list[str] = Field(default_factory=list)
+    effects: list[str] = Field(default_factory=list)
+    selectors: list[str] = Field(default_factory=list)
+
+
 class AngularDigest(BaseModel):
     project: str
     type: str = "angular"
-    digest_version: str = "1.0"
+    digest_version: str = "2.0"
     created_at: str
     modules: list[str] = Field(default_factory=list)
     components: list[AngularComponentDigest] = Field(default_factory=list)
@@ -75,6 +109,8 @@ class AngularDigest(BaseModel):
     guards: list[str] = Field(default_factory=list)
     interceptors: list[str] = Field(default_factory=list)
     models: list[str] = Field(default_factory=list)
+    ngrx_features: list[NgRxFeature] = Field(default_factory=list)
+    environments: dict = Field(default_factory=dict)
 
 
 class ApiContract(BaseModel):
@@ -86,7 +122,7 @@ class ApiContract(BaseModel):
 
 class MasterDigest(BaseModel):
     system: str
-    digest_version: str = "1.0"
+    digest_version: str = "2.0"
     created_at: str
     projects: list[str] = Field(default_factory=list)
     api_contracts: list[ApiContract] = Field(default_factory=list)

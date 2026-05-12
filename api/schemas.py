@@ -10,6 +10,7 @@ class AskRequest(BaseModel):
     mode: Optional[str] = None
     file_context: Optional[str] = None
     project_filter: Optional[str] = None
+    session_id: Optional[str] = None
 
 
 class SourceReference(BaseModel):
@@ -24,6 +25,7 @@ class AskResponse(BaseModel):
     mode: str
     sources: list[SourceReference] = Field(default_factory=list)
     duration_ms: int
+    session_id: str
 
 
 class ReindexRequest(BaseModel):

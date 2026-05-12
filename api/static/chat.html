@@ -73,6 +73,7 @@
       textarea { width: 100%; min-height: 100px; border-radius: 8px; border: 1px solid #334155; background: #0b1220; color: #e2e8f0; padding: 10px; box-sizing: border-box; resize: vertical; }
       button, select { border: 1px solid #334155; background: #1e293b; color: #e2e8f0; border-radius: 8px; padding: 8px 10px; cursor: pointer; }
       button:hover { background: #293548; }
+      #newSessionBtn { color: #94a3b8; font-size: 12px; padding: 6px 8px; }
       .row { display: flex; gap: 8px; align-items: center; }
       .status { font-size: 12px; color: #93c5fd; }
       .hint { font-size: 12px; color: #94a3b8; }
@@ -92,7 +93,9 @@
             <option value="generate">generate</option>
             <option value="impact">impact</option>
           </select>
-          <button id="healthBtn" type="button">Check Health</button>
+          <button id="healthBtn" type="button">Health</button>
+          <button id="newSessionBtn" type="button">New Session</button>
+          <span id="sessionBadge" class="hint" style="font-size:11px;color:#475569;cursor:default;" title=""></span>
           <span id="status" class="status"></span>
         </div>
         <div id="messages" class="messages"></div>
@@ -111,6 +114,9 @@
       const input = document.getElementById("input");
       const mode = document.getElementById("mode");
       const statusEl = document.getElementById("status");
+
+      // Session persistence across page reloads
+      let sessionId = localStorage.getItem("chat_session_id") || null;
 
       marked.setOptions({
         highlight: (code, lang) => {
@@ -145,11 +151,22 @@
         messages.scrollTop = messages.scrollHeight;
       }
 
+      function parseSSEBlock(block) {
+        // Parse a single SSE block (split by \n\n) into {type, data}
+        let evType = "message";
+        let evData = "";
+        for (const line of block.split("\n")) {
+          if (line.startsWith("event: ")) evType = line.slice(7).trim();
+          else if (line.startsWith("data: ")) evData = line.slice(6);
+        }
+        return { type: evType, data: evData };
+      }
+
       async function askStream(question, selectedMode) {
         const res = await fetch("/ask/stream", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ question, mode: selectedMode }),
+          body: JSON.stringify({ question, mode: selectedMode, session_id: sessionId }),
         });
         if (!res.ok || !res.body) throw new Error(`HTTP ${res.status}`);
 
@@ -158,28 +175,52 @@
         const decoder = new TextDecoder();
         let buffer = "";
         let fullText = "";
+
         while (true) {
           const { value, done } = await reader.read();
           if (done) break;
           buffer += decoder.decode(value, { stream: true });
-          const events = buffer.split("\n\n");
-          buffer = events.pop() || "";
-          for (const ev of events) {
-            if (ev.startsWith("data: ")) fullText += ev.slice(6);
+          const blocks = buffer.split("\n\n");
+          buffer = blocks.pop() || "";
+          for (const block of blocks) {
+            if (!block.trim()) continue;
+            const { type, data } = parseSSEBlock(block);
+            if (type === "session") {
+              sessionId = data;
+              localStorage.setItem("chat_session_id", sessionId);
+              updateSessionBadge();
+            } else if (type === "done") {
+              // stream finished
+            } else if (data) {
+              fullText += data;
+              updateAiMsg(ai, fullText);
+            }
           }
-          updateAiMsg(ai, fullText);
         }
-        updateAiMsg(ai, fullText);
+        if (fullText) updateAiMsg(ai, fullText);
       }
 
       async function askFallback(question, selectedMode) {
         const res = await fetch("/ask", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ question, mode: selectedMode }),
+          body: JSON.stringify({ question, mode: selectedMode, session_id: sessionId }),
         });
         const data = await res.json();
+        if (data.session_id) {
+          sessionId = data.session_id;
+          localStorage.setItem("chat_session_id", sessionId);
+          updateSessionBadge();
+        }
         addMsg("ai", data.answer || JSON.stringify(data));
+      }
+
+      function updateSessionBadge() {
+        const badge = document.getElementById("sessionBadge");
+        if (badge && sessionId) {
+          badge.textContent = `session: ${sessionId.slice(0, 8)}…`;
+          badge.title = sessionId;
+        }
       }
 
       document.getElementById("sendBtn").addEventListener("click", async () => {
@@ -187,7 +228,7 @@
         if (!q) return;
         addMsg("user", q);
         input.value = "";
-        statusEl.textContent = "thinking...";
+        statusEl.textContent = "thinking…";
         try {
           await askStream(q, mode.value);
           statusEl.textContent = "done";
@@ -202,6 +243,13 @@
         }
       });
 
+      // Send on Ctrl+Enter
+      input.addEventListener("keydown", (e) => {
+        if ((e.ctrlKey || e.metaKey) && e.key === "Enter") {
+          document.getElementById("sendBtn").click();
+        }
+      });
+
       document.getElementById("healthBtn").addEventListener("click", async () => {
         const res = await fetch("/health");
         const data = await res.json();
@@ -209,7 +257,7 @@
       });
 
       document.getElementById("reindexBtn").addEventListener("click", async () => {
-        statusEl.textContent = "reindexing...";
+        statusEl.textContent = "reindexing…";
         const res = await fetch("/reindex", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
@@ -218,6 +266,17 @@
         const data = await res.json();
         statusEl.textContent = `reindexed ${data.projects_indexed?.length || 0} project(s), chunks=${data.chunks_created}`;
       });
+
+      document.getElementById("newSessionBtn").addEventListener("click", () => {
+        sessionId = null;
+        localStorage.removeItem("chat_session_id");
+        updateSessionBadge();
+        messages.innerHTML = "";
+        statusEl.textContent = "new session started";
+      });
+
+      // Init session badge
+      updateSessionBadge();
     </script>
   </body>
 </html>

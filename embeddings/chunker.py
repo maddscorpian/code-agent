@@ -2,10 +2,9 @@ from __future__ import annotations
 
 import json
 import logging
+import re
 from pathlib import Path
 from typing import Any
-
-import tiktoken
 
 logger = logging.getLogger(__name__)
 
@@ -16,10 +15,10 @@ class Chunker:
         self.digests_dir = self.root / "digests"
         self.encoder = None
         try:
+            import tiktoken
             self.encoder = tiktoken.get_encoding("cl100k_base")
         except Exception as exc:
-            # Keep indexing usable in strict corporate/offline environments.
-            logger.warning("tiktoken cl100k_base unavailable; using char-based chunking fallback: %s", exc)
+            logger.warning("tiktoken cl100k_base unavailable; using char-based fallback: %s", exc)
 
     def build_chunks(self) -> list[dict]:
         chunks: list[dict] = []
@@ -27,57 +26,251 @@ class Chunker:
         chunks.extend(self._code_chunks())
         return chunks
 
+    # ------------------------------------------------------------------
+    # Digest-derived chunks
+    # ------------------------------------------------------------------
+
     def _digest_chunks(self) -> list[dict]:
         rows: list[dict] = []
         for file in self.digests_dir.glob("*.digest.json"):
-            data = json.loads(file.read_text(encoding="utf-8"))
+            try:
+                data = json.loads(file.read_text(encoding="utf-8"))
+            except Exception:
+                continue
             project = data.get("project") or data.get("system", "master")
-            if "endpoints" in data:
-                for i, ep in enumerate(data.get("endpoints", [])):
-                    content = (
-                        f"Endpoint {ep.get('method')} {ep.get('path')}\n"
-                        f"controller={ep.get('controller')} handler={ep.get('handler')}\n"
-                        f"request={ep.get('request_dto')} response={ep.get('response_dto')}\n"
-                        f"auth={ep.get('auth_required')} roles={ep.get('roles')}"
-                    )
-                    rows.append(self._chunk_dict(project, str(file), i, content, {"source": "digest", "project": project, "type": "endpoint", "name": ep.get("handler", "endpoint")}))
-                for i, ent in enumerate(data.get("entities", [])):
-                    content = f"Entity {ent.get('name')} table={ent.get('table')}\nfields={ent.get('fields')}\nrelationships={ent.get('relationships')}"
-                    rows.append(self._chunk_dict(project, str(file), 1000 + i, content, {"source": "digest", "project": project, "type": "entity", "name": ent.get("name", "entity")}))
-                for i, fc in enumerate(data.get("feign_clients", [])):
-                    content = f"Feign {fc.get('client_name')} target={fc.get('target_service')}\ncalls={fc.get('calls')}"
-                    rows.append(self._chunk_dict(project, str(file), 2000 + i, content, {"source": "digest", "project": project, "type": "feign", "name": fc.get("client_name", "feign")}))
+
+            # Endpoints
+            for i, ep in enumerate(data.get("endpoints", [])):
+                content = (
+                    f"Endpoint {ep.get('method')} {ep.get('path')}\n"
+                    f"controller={ep.get('controller')} handler={ep.get('handler')}\n"
+                    f"request={ep.get('request_dto')} response={ep.get('response_dto')}\n"
+                    f"auth={ep.get('auth_required')} roles={ep.get('roles')}"
+                )
+                if ep.get("javadoc"):
+                    content += f"\ndoc={ep['javadoc']}"
+                rows.append(self._chunk_dict(project, str(file), i, content, {
+                    "source": "digest", "project": project, "type": "endpoint",
+                    "name": ep.get("handler", "endpoint"),
+                }))
+
+            # Entities
+            for i, ent in enumerate(data.get("entities", [])):
+                content = (
+                    f"Entity {ent.get('name')} table={ent.get('table')}\n"
+                    f"fields={ent.get('fields')}\nrelationships={ent.get('relationships')}"
+                )
+                rows.append(self._chunk_dict(project, str(file), 1000 + i, content, {
+                    "source": "digest", "project": project, "type": "entity",
+                    "name": ent.get("name", "entity"),
+                }))
+
+            # Feign clients
+            for i, fc in enumerate(data.get("feign_clients", [])):
+                content = f"Feign {fc.get('client_name')} target={fc.get('target_service')}\ncalls={fc.get('calls')}"
+                rows.append(self._chunk_dict(project, str(file), 2000 + i, content, {
+                    "source": "digest", "project": project, "type": "feign",
+                    "name": fc.get("client_name", "feign"),
+                }))
+
+            # Spring beans (services, repositories, components)
+            for i, bean in enumerate(data.get("beans", [])):
+                content = (
+                    f"Bean {bean.get('name')} type={bean.get('bean_type')} file={bean.get('file_path')}\n"
+                    f"dependencies={bean.get('dependencies')}\n"
+                    f"methods={bean.get('methods')}\n"
+                    f"transactional_methods={bean.get('transactional_methods')}"
+                )
+                rows.append(self._chunk_dict(project, str(file), 3000 + i, content, {
+                    "source": "digest", "project": project, "type": "bean",
+                    "name": bean.get("name", "bean"), "class_name": bean.get("name"),
+                }))
+
+            # Exception handlers
+            for i, eh in enumerate(data.get("exception_handlers", [])):
+                content = (
+                    f"ExceptionHandler {eh.get('advice_class')}\n"
+                    f"handles={eh.get('handled_exceptions')}"
+                )
+                rows.append(self._chunk_dict(project, str(file), 4000 + i, content, {
+                    "source": "digest", "project": project, "type": "exception_handler",
+                    "name": eh.get("advice_class", "handler"),
+                }))
+
+            # Scheduled tasks
+            for i, task in enumerate(data.get("scheduled_tasks", [])):
+                content = (
+                    f"ScheduledTask class={task.get('class_name')} method={task.get('method')}\n"
+                    f"schedule={task.get('schedule')}"
+                )
+                rows.append(self._chunk_dict(project, str(file), 4500 + i, content, {
+                    "source": "digest", "project": project, "type": "scheduled_task",
+                    "name": task.get("method", "task"),
+                }))
+
+            # DB migrations
+            for i, migration in enumerate(data.get("db_migrations", [])):
+                rows.append(self._chunk_dict(project, str(file), 4800 + i, f"Migration: {migration}", {
+                    "source": "digest", "project": project, "type": "migration", "name": f"migration_{i}",
+                }))
+
+            # Build dependencies (one combined chunk)
+            build_deps = data.get("build_dependencies", [])
+            if build_deps:
+                rows.append(self._chunk_dict(project, str(file), 4900, f"Build dependencies:\n" + "\n".join(build_deps), {
+                    "source": "digest", "project": project, "type": "build_deps", "name": "dependencies",
+                }))
+
+            # Angular components
+            for i, comp in enumerate(data.get("components", [])):
+                content = (
+                    f"Component {comp.get('name')} selector={comp.get('selector')} file={comp.get('file_path')}\n"
+                    f"inputs={comp.get('inputs')} outputs={comp.get('outputs')}\n"
+                    f"services={comp.get('injected_services')}"
+                )
+                if comp.get("template_events"):
+                    content += f"\ntemplate_events={comp['template_events']}"
+                rows.append(self._chunk_dict(project, str(file), 5000 + i, content, {
+                    "source": "digest", "project": project, "type": "component",
+                    "name": comp.get("name", "component"),
+                }))
+
+            # Angular services
+            for i, svc in enumerate(data.get("services", [])):
+                calls_summary = "; ".join(
+                    f"{c.get('method')} {c.get('url')}" for c in svc.get("http_calls", [])
+                )
+                content = (
+                    f"AngularService {svc.get('name')} file={svc.get('file_path')}\n"
+                    f"http_calls={calls_summary}\n"
+                    f"dependencies={svc.get('injected_dependencies')}"
+                )
+                rows.append(self._chunk_dict(project, str(file), 6000 + i, content, {
+                    "source": "digest", "project": project, "type": "angular_service",
+                    "name": svc.get("name", "service"),
+                }))
+
+            # NgRx features
+            for i, feat in enumerate(data.get("ngrx_features", [])):
+                content = (
+                    f"NgRxFeature {feat.get('name')}\n"
+                    f"actions={feat.get('actions')}\n"
+                    f"effects={feat.get('effects')}\n"
+                    f"selectors={feat.get('selectors')}"
+                )
+                rows.append(self._chunk_dict(project, str(file), 7000 + i, content, {
+                    "source": "digest", "project": project, "type": "ngrx",
+                    "name": feat.get("name", "feature"),
+                }))
+
+            # Master digest special sections
             if file.name == "master.digest.json":
                 auth = data.get("auth_flow", {})
-                rows.append(self._chunk_dict("master", str(file), 0, f"Auth flow summary: {auth}", {"source": "digest", "project": "master", "type": "auth_flow", "name": "auth_flow"}))
+                rows.append(self._chunk_dict("master", str(file), 0, f"Auth flow: {auth}", {
+                    "source": "digest", "project": "master", "type": "auth_flow", "name": "auth_flow",
+                }))
+                contracts = data.get("api_contracts", [])
+                if contracts:
+                    contract_text = "\n".join(
+                        f"{c.get('caller')} -> {c.get('service')} : {c.get('endpoint')} via {c.get('angular_service')}"
+                        for c in contracts
+                    )
+                    rows.append(self._chunk_dict("master", str(file), 1, f"API contracts:\n{contract_text}", {
+                        "source": "digest", "project": "master", "type": "api_contracts", "name": "contracts",
+                    }))
+
         return rows
 
+    # ------------------------------------------------------------------
+    # Source code chunks (semantic boundary splitting)
+    # ------------------------------------------------------------------
+
     def _code_chunks(self) -> list[dict]:
-        rows = []
+        rows: list[dict] = []
         for file in self.root.rglob("*"):
             if not file.is_file():
                 continue
             if any(part.startswith(".") for part in file.parts):
                 continue
             suffix = file.suffix.lower()
-            if suffix not in {".java", ".ts", ".html", ".yml", ".yaml", ".properties", ".json"}:
+            if suffix not in {".java", ".ts", ".html", ".yml", ".yaml", ".properties", ".sql"}:
                 continue
-            if "digests" in file.parts or "vector_db" in file.parts or "vscode-extension" in file.parts:
+            parts_set = set(file.parts)
+            if any(skip in parts_set for skip in ("digests", "vector_db", "vscode-extension", "node_modules", "target", "build", ".gradle")):
                 continue
             rel = str(file.relative_to(self.root))
             project = rel.split("/")[0] if "/" in rel else "local-ai-agent"
-            content = file.read_text(encoding="utf-8", errors="ignore")
-            for idx, piece in enumerate(self._split_content(content)):
-                rows.append(
-                    self._chunk_dict(
-                        project,
-                        rel,
-                        idx,
-                        piece,
-                        {"source": "code", "project": project, "type": suffix.lstrip("."), "file_path": rel, "class_name": self._guess_class(piece), "method_name": self._guess_method(piece)},
-                    )
-                )
+            try:
+                content = file.read_text(encoding="utf-8", errors="ignore")
+            except Exception:
+                continue
+
+            # Use semantic splitting for Java and TypeScript
+            if suffix == ".java":
+                pieces = self._split_java(content)
+            elif suffix == ".ts":
+                pieces = self._split_typescript(content)
+            else:
+                pieces = self._split_content(content)
+
+            for idx, piece in enumerate(pieces):
+                rows.append(self._chunk_dict(
+                    project, rel, idx, piece,
+                    {
+                        "source": "code", "project": project, "type": suffix.lstrip("."),
+                        "file_path": rel, "class_name": self._guess_class(piece),
+                        "method_name": self._guess_method(piece),
+                    },
+                ))
         return rows
+
+    def _split_java(self, content: str) -> list[str]:
+        """Split Java files at method boundaries for better semantic chunks."""
+        # Split into class-level sections first
+        method_pattern = re.compile(
+            r"(?:(?:/\*\*[\s\S]*?\*/\s*)?(?:@\w+[^\n]*\n\s*)*"
+            r"(?:public|private|protected|static|final|synchronized|abstract)\s+[\w<>\[\],\s]+\s+\w+\s*\([^)]*\)"
+            r"(?:\s+throws\s+[\w,\s]+)?\s*\{)",
+            re.MULTILINE,
+        )
+        boundaries = [m.start() for m in method_pattern.finditer(content)]
+        if len(boundaries) < 2:
+            return self._split_content(content)
+
+        pieces: list[str] = []
+        # Class header
+        header = content[: boundaries[0]]
+        if header.strip():
+            pieces.append(header)
+        # Each method
+        for i, start in enumerate(boundaries):
+            end = boundaries[i + 1] if i + 1 < len(boundaries) else len(content)
+            piece = content[start:end]
+            if len(piece.strip()) > 20:
+                pieces.extend(self._split_content(piece))
+        return pieces or self._split_content(content)
+
+    def _split_typescript(self, content: str) -> list[str]:
+        """Split TypeScript files at function/class/method boundaries."""
+        fn_pattern = re.compile(
+            r"(?:(?:\/\/[^\n]*\n\s*)*)"
+            r"(?:export\s+)?(?:async\s+)?(?:function\s+\w+|(?:public|private|protected|readonly)\s+(?:async\s+)?(?:\w+)\s*\(|(?:\w+)\s*=\s*(?:async\s+)?\()",
+            re.MULTILINE,
+        )
+        boundaries = [m.start() for m in fn_pattern.finditer(content)]
+        if len(boundaries) < 2:
+            return self._split_content(content)
+
+        pieces: list[str] = []
+        header = content[: boundaries[0]]
+        if header.strip():
+            pieces.append(header)
+        for i, start in enumerate(boundaries):
+            end = boundaries[i + 1] if i + 1 < len(boundaries) else len(content)
+            piece = content[start:end]
+            if len(piece.strip()) > 20:
+                pieces.extend(self._split_content(piece))
+        return pieces or self._split_content(content)
 
     def _split_content(self, content: str, target_tokens: int = 500, overlap_tokens: int = 50) -> list[str]:
         if self.encoder is not None:
@@ -88,17 +281,15 @@ class Chunker:
             start = 0
             while start < len(toks):
                 end = min(start + target_tokens, len(toks))
-                chunk_toks = toks[start:end]
-                chunks.append(self.encoder.decode(chunk_toks))
+                chunks.append(self.encoder.decode(toks[start:end]))
                 if end == len(toks):
                     break
                 start = max(0, end - overlap_tokens)
             return chunks
 
-        # Approximate token size fallback: ~4 chars/token.
         target_chars = target_tokens * 4
         overlap_chars = overlap_tokens * 4
-        if len(content) <= int(600 * 4):
+        if len(content) <= target_chars + overlap_chars:
             return [content]
         chunks = []
         start = 0
@@ -110,20 +301,23 @@ class Chunker:
             start = max(0, end - overlap_chars)
         return chunks
 
+    # ------------------------------------------------------------------
+    # Helpers
+    # ------------------------------------------------------------------
+
     @staticmethod
     def _guess_class(content: str) -> str:
         import re
-
         m = re.search(r"(?:class|interface|enum)\s+([A-Za-z0-9_]+)", content)
         return m.group(1) if m else ""
 
     @staticmethod
     def _guess_method(content: str) -> str:
         import re
-
-        m = re.search(r"(public|private|protected)\s+[A-Za-z0-9_<>\[\]]+\s+([A-Za-z0-9_]+)\s*\(", content)
-        return m.group(2) if m else ""
+        m = re.search(r"(?:public|private|protected|async)\s+[A-Za-z0-9_<>\[\]]+\s+([A-Za-z0-9_]+)\s*\(", content)
+        return m.group(1) if m else ""
 
     @staticmethod
     def _chunk_dict(project: str, file_path: str, idx: int, content: str, metadata: dict[str, Any]) -> dict:
         return {"id": f"{project}::{file_path}::{idx}", "content": content, "metadata": metadata}
+
