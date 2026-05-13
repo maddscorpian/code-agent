@@ -29,8 +29,10 @@ class PlanResult:
 
 TOOL_CATALOGUE = """\
 Available tools (name: description — input format):
-  search_codebase       : semantic search over all code & digests — any query string
+  search_deep           : PREFERRED for deep/flow/architecture questions — multi-hop re-ranked search across 8 query variants — any query string
+  search_codebase       : quick semantic search over all code & digests — any query string
   search_by_project     : project-scoped semantic search — "<project>::<query>"
+  get_method_calls      : method call graph for a @Service/@Repository — "ClassName" or "service-name::ClassName"
   trace_request         : trace endpoint end-to-end (Angular→Controller→Service→Repo→Entity) — "/api/path" or "GET /api/path"
   find_callers          : find everything that calls a class, endpoint, or Kafka topic — class name or "/api/path"
   impact_graph          : BFS impact analysis — class name or entity name (use for "what breaks if…" questions)
@@ -57,14 +59,15 @@ PLANNER_PROMPT = """{system}
 Mode: {mode}
 
 Planning guidelines:
-- chat/explain questions       → search_codebase + trace_request (if a path is mentioned)
-- "how does X work" questions  → trace_request + search_codebase
-- "who calls X" questions      → find_callers
-- "what breaks if I change X"  → impact_graph + search_codebase
-- generate/implement questions → search_codebase (to find patterns) + get_entity_schema (if entity involved)
-- deep/architecture questions  → trace_request + search_codebase + get_api_contracts
-- Use 2–6 tool calls; never call the same tool twice with the same input.
-- Prefer graph tools (trace_request, find_callers, impact_graph) over search_codebase for structural questions.
+- deep/architecture/flow questions → search_deep + trace_request + get_method_calls (for key service classes)
+- "how does X work" questions      → trace_request + search_deep + get_method_calls (on the main service)
+- "who calls X" questions          → find_callers + search_deep
+- "what breaks if I change X"      → impact_graph + search_deep
+- generate/implement questions     → search_codebase (patterns) + get_entity_schema (entity) + get_method_calls (similar class)
+- chat/explain questions           → search_codebase + trace_request (if a path is mentioned)
+- Use 3–6 tool calls; never call the same tool twice with the same input.
+- For deep mode: ALWAYS use search_deep instead of search_codebase — it runs multi-hop retrieval.
+- ALWAYS include get_method_calls when a specific service class is named or implied.
 
 Output exactly this JSON (no markdown, no backticks):
 {{"reasoning":"why these tools and inputs","tool_calls":[{{"tool":"tool_name","input":"tool_input"}}]}}
@@ -183,7 +186,10 @@ def _default_plan(question: str, mode: str) -> PlanResult:
         path = _extract_path(question)
         if path:
             calls.append(ToolCall("trace_request", path))
-        calls.append(ToolCall("search_codebase", question))
+        calls.append(ToolCall("search_deep", question))
+        cls = _extract_subject(question)
+        if cls:
+            calls.append(ToolCall("get_method_calls", cls))
         if not path:
             calls.append(ToolCall("get_api_contracts", ""))
 

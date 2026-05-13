@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import os
+import re
 from collections.abc import Iterator
 
 from dotenv import load_dotenv
@@ -93,27 +94,123 @@ class RAGChain:
             qvec = self.embeddings.embed_query(question)
             return self.store.query(qvec, n_results=12)
 
-        # Deep mode: multi-query retrieval with deduplication
-        query_variants = [
-            question,
-            f"Detailed architecture and flow for: {question}",
-            f"Endpoints, entities, DTOs, and dependencies related to: {question}",
-            f"Security, auth, and edge cases related to: {question}",
-            f"Angular components and services related to: {question}",
-        ]
+        # Change 3: targeted query variants covering different knowledge layers
+        variants = self._build_deep_query_variants(question)
         merged: dict[str, dict] = {}
-        for q in query_variants:
+        for q in variants:
             qvec = self.embeddings.embed_query(q)
             for hit in self.store.query(qvec, n_results=14):
-                md = hit.get("metadata", {})
-                key = (
-                    f"{md.get('project', '')}::{md.get('file_path', '')}::"
-                    f"{md.get('class_name', '')}::{md.get('method_name', '')}::"
-                    f"{hash(hit.get('content', ''))}"
-                )
+                key = self._hit_key(hit)
                 if key not in merged or hit.get("distance", 9e9) < merged[key].get("distance", 9e9):
                     merged[key] = hit
-        return sorted(merged.values(), key=lambda h: h.get("distance", 9e9))[:30]
+
+        # Change 1: multi-hop — follow class names found in initial results
+        merged = self._multihop_retrieve(list(merged.values()), merged)
+
+        # Change 2: re-rank by question word overlap before capping
+        reranked = self._rerank(list(merged.values()), question)
+        return reranked[:50]
+
+    # ------------------------------------------------------------------
+    # Change 3: targeted deep-mode query variants
+    # ------------------------------------------------------------------
+
+    @staticmethod
+    def _build_deep_query_variants(question: str) -> list[str]:
+        variants = [
+            question,
+            f"service method implementation business logic: {question}",
+            f"REST endpoint controller handler DTO request response: {question}",
+            f"entity repository database query schema: {question}",
+            f"configuration properties Feign Kafka event publisher: {question}",
+            f"Angular component service HTTP call frontend: {question}",
+            f"method call graph dependencies injection: {question}",
+        ]
+        # Targeted variant using service name if present
+        svc = re.search(r'ms-java-[\w-]+|module-java-[\w-]+', question)
+        if svc:
+            variants.append(f"{svc.group(0)} implementation details: {question}")
+        # Targeted variant using PascalCase class name if present
+        cls = re.search(r'\b([A-Z][a-z]+(?:[A-Z][a-z]+)+)\b', question)
+        if cls:
+            variants.append(f"{cls.group(1)} method calls dependencies implementation")
+        return variants[:8]
+
+    # ------------------------------------------------------------------
+    # Change 1: multi-hop retrieval
+    # ------------------------------------------------------------------
+
+    def _multihop_retrieve(
+        self, initial_hits: list[dict], merged: dict[str, dict]
+    ) -> dict[str, dict]:
+        """
+        Extract class/bean names from initial hits and do follow-up targeted searches.
+        Follows the call chain one hop deeper without infinite recursion.
+        """
+        found_names: set[str] = set()
+        for hit in initial_hits:
+            content = hit.get("content", "")
+            # PascalCase class names (OrderService, CustomerRepository, etc.)
+            found_names.update(re.findall(r'\b([A-Z][a-z]+(?:[A-Z][a-z]+)+)\b', content))
+            # Bean names in "dependencies=[...]" lines
+            found_names.update(re.findall(r"'([A-Z][a-zA-Z]+)'", content))
+
+        # Limit follow-up to avoid excessive embedding calls
+        candidates = [n for n in found_names if n not in {"Optional", "ResponseEntity",
+                      "List", "Map", "String", "Long", "Integer", "Boolean"}][:10]
+
+        for name in candidates:
+            qvec = self.embeddings.embed_query(
+                f"{name} implementation method calls dependencies"
+            )
+            for hit in self.store.query(qvec, n_results=5):
+                key = self._hit_key(hit)
+                if key not in merged:
+                    merged[key] = hit
+
+        return merged
+
+    # ------------------------------------------------------------------
+    # Change 2: re-ranking by question word relevance
+    # ------------------------------------------------------------------
+
+    @staticmethod
+    def _rerank(hits: list[dict], question: str) -> list[dict]:
+        """
+        Score and re-sort hits so the most question-relevant chunks appear first.
+        The LLM's attention is strongest on early context, so this matters.
+        """
+        stop = {"what", "how", "does", "the", "and", "for", "with", "that", "this",
+                "which", "when", "where", "from", "into", "about", "have", "been",
+                "will", "can", "are", "its", "our", "their", "there", "here"}
+        q_words = {w.lower() for w in re.findall(r'\b\w{4,}\b', question.lower())
+                   if w.lower() not in stop}
+
+        def score(hit: dict) -> float:
+            md = hit.get("metadata", {})
+            searchable = (hit.get("content", "") + " " + str(md)).lower()
+            word_score = sum(1 for w in q_words if w in searchable)
+            # Structured knowledge ranks above raw code for deep questions
+            src_boost = {"digest": 1.5, "graph": 1.2, "code": 0.0}.get(md.get("source", "code"), 0.0)
+            # Chunk types most useful for deep understanding
+            type_boost = {
+                "method_call_graph": 1.0, "endpoint": 0.8, "bean": 0.6,
+                "entity": 0.5, "feign": 0.5, "api_contracts": 0.4,
+            }.get(md.get("type", ""), 0.0)
+            # Closer distance = higher relevance
+            dist_score = max(0.0, 1.0 - hit.get("distance", 1.0))
+            return word_score + src_boost + type_boost + dist_score
+
+        return sorted(hits, key=score, reverse=True)
+
+    @staticmethod
+    def _hit_key(hit: dict) -> str:
+        md = hit.get("metadata", {})
+        return (
+            f"{md.get('project', '')}::{md.get('file_path', '')}::"
+            f"{md.get('class_name', '')}::{md.get('method_name', '')}::"
+            f"{hash(hit.get('content', ''))}"
+        )
 
     @staticmethod
     def _format_context(hits: list[dict]) -> str:

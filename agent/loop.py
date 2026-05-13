@@ -12,8 +12,8 @@ logger = logging.getLogger(__name__)
 _PLAN_SENTINEL = "__PLAN__"
 _PLAN_SENTINEL_END = "__END_PLAN__"
 
-# Cap tool output to avoid blowing the context window
-_MAX_TOOL_OUTPUT = 3000
+# Cap tool output — search_deep returns up to 30 chunks so needs more room
+_MAX_TOOL_OUTPUT = 6000
 
 
 # ------------------------------------------------------------------
@@ -27,13 +27,28 @@ and method names from the gathered context. If context is insufficient, say so.\
 """,
 
     "deep": """\
-Provide a deep, layered answer:
-1. Direct answer (2–3 sentences)
-2. Layer-by-layer walkthrough: Angular → controller → service bean → repository → entity → DB migrations
-3. Concrete artifacts cited: class, method, endpoint, file path
-4. Edge cases, failure modes, and security implications
-5. Gaps (what the gathered context doesn't cover)
-Always cite specific artifacts. Do not guess.\
+Provide a deep, evidence-backed answer. Cite [SOURCE N] for every specific claim.
+
+Structure your answer as:
+1. **Direct answer** — 2-3 sentences summarising what happens
+2. **Layer-by-layer trace** — walk each layer explicitly, citing sources:
+   - Angular: component → service → HTTP call (method, URL)
+   - Controller: class name, handler method, auth/roles
+   - Service: class, key methods, what they call (use method_call_graph data if available)
+   - Repository: class, relevant query methods or @Query SQL/JPQL
+   - Entity/DB: entity class, table, relevant fields
+   - Events: Kafka/RabbitMQ topics produced or consumed
+3. **Method call chain** — list the concrete call sequence step by step if method_call_graph data is present
+4. **Cross-service interactions** — Feign clients, external calls, downstream services triggered
+5. **Failure modes** — what can fail at each layer and what the impact would be
+6. **Security** — auth requirements, roles, JWT claims involved
+7. **Context gaps** — explicitly state which layers you could NOT find context for
+
+Rules:
+- Cite [SOURCE N] for every class name, method, or endpoint you reference
+- If method_call_graph data is in the sources, use it to trace the actual call chain
+- If a layer is missing from context, write "Context not retrieved for [layer]"
+- Never invent class names, method names, or endpoints not present in the sources\
 """,
 
     "generate": """\

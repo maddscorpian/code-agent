@@ -71,14 +71,19 @@ class SpringBootParser:
                 if bean_type == "controller" or (ast_info.get("has_controller") and not bean_type):
                     endpoints.extend(self._parse_controllers(text))
                 elif bean_type in BEAN_ANNOTATIONS.values() and bean_type != "advice":
+                    dep_names = ast_info.get("dependencies", [])
+                    method_calls = self._extract_method_call_graph(text, dep_names)
+                    queries = self._parse_repository_queries(text) if bean_type == "repository" else []
                     beans.append(
                         BeanDigest(
                             name=class_name,
                             bean_type=bean_type,
                             file_path=rel,
-                            dependencies=ast_info.get("dependencies", []),
+                            dependencies=dep_names,
                             methods=ast_info.get("method_names", []),
                             transactional_methods=ast_info.get("transactional_methods", []),
+                            method_calls=method_calls,
+                            queries=queries,
                         )
                     )
                 elif bean_type == "advice":
@@ -257,6 +262,88 @@ class SpringBootParser:
             return str(raw)
         except Exception:
             return "unknown"
+
+    # ------------------------------------------------------------------
+    # Change 4: Method call graph extraction
+    # ------------------------------------------------------------------
+
+    def _extract_method_call_graph(self, text: str, dep_names: list[str]) -> dict[str, list[str]]:
+        """
+        Extract which injected dependency methods each service method calls.
+        Returns {method_name: ["dep.call()", ...]}
+        Only tracks calls on known injected fields to avoid noise.
+        """
+        # Build set of field names to track — constructor params + @Autowired fields
+        field_names: set[str] = set(dep_names)
+        field_names.update(re.findall(
+            r'private\s+(?:final\s+)?[\w<>,\s]+\s+(\w+)\s*;', text
+        ))
+        field_names.update(re.findall(
+            r'@Autowired\s+private\s+[\w<>]+\s+(\w+)', text
+        ))
+        ctor = re.search(r'public\s+\w+\(([^)]+)\)', text)
+        if ctor:
+            for part in ctor.group(1).split(","):
+                parts = part.strip().split()
+                if len(parts) >= 2:
+                    field_names.add(parts[-1].strip())
+
+        # Remove obvious non-service names
+        noise = {"id", "name", "type", "status", "value", "message", "data", "result",
+                 "response", "request", "error", "code", "list", "map", "set", "size"}
+        field_names = {f for f in field_names if f.lower() not in noise and len(f) > 2}
+
+        # Also always track common Spring infrastructure fields
+        infra = {"kafkaTemplate", "rabbitTemplate", "restTemplate", "webClient",
+                 "applicationEventPublisher", "objectMapper", "jdbcTemplate"}
+        track = field_names | infra
+
+        # Find method boundaries
+        method_re = re.compile(
+            r'(?:public|private|protected)\s+[\w<>\[\]?,\s]+\s+(\w+)\s*\([^)]*\)'
+            r'(?:\s+throws\s+[\w,\s]+)?\s*\{',
+            re.MULTILINE,
+        )
+        matches = list(method_re.finditer(text))
+
+        result: dict[str, list[str]] = {}
+        skip = {"if", "while", "for", "switch", "try", "catch", "synchronized"}
+
+        for i, m in enumerate(matches):
+            method_name = m.group(1)
+            if method_name in skip:
+                continue
+            body_start = m.end()
+            body_end = matches[i + 1].start() if i + 1 < len(matches) else len(text)
+            body = text[body_start:body_end]
+
+            calls: list[str] = []
+            for field in track:
+                for called in re.findall(rf'\b{re.escape(field)}\.([a-zA-Z]\w+)\s*\(', body):
+                    if len(called) > 2:
+                        calls.append(f"{field}.{called}()")
+
+            if calls:
+                result[method_name] = sorted(set(calls))[:8]
+
+        return result
+
+    # ------------------------------------------------------------------
+    # Change 5: JPQL / @Query extraction
+    # ------------------------------------------------------------------
+
+    @staticmethod
+    def _parse_repository_queries(text: str) -> list[str]:
+        """Extract @Query JPQL/HQL/SQL strings from repository interfaces."""
+        queries: list[str] = []
+        for m in re.finditer(
+            r'@Query\s*\(\s*(?:value\s*=\s*)?["\']([^"\']{10,})["\']',
+            text, re.MULTILINE,
+        ):
+            q = m.group(1).strip()
+            if q:
+                queries.append(q[:300])   # cap individual query length
+        return queries
 
     # ------------------------------------------------------------------
     # Regex-based extraction (kept from v1, used for annotation values)

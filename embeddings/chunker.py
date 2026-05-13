@@ -88,10 +88,30 @@ class Chunker:
                     f"methods={bean.get('methods')}\n"
                     f"transactional_methods={bean.get('transactional_methods')}"
                 )
+                # Include method call graph so the LLM can trace internal logic (Change 4)
+                method_calls = bean.get("method_calls", {})
+                if method_calls:
+                    call_lines = [f"  {m}() → {', '.join(calls)}" for m, calls in list(method_calls.items())[:10]]
+                    content += "\nmethod_call_graph:\n" + "\n".join(call_lines)
+                # Include JPQL queries for repositories (Change 5)
+                queries = bean.get("queries", [])
+                if queries:
+                    content += "\nqueries:\n" + "\n".join(f"  {q[:200]}" for q in queries[:5])
                 rows.append(self._chunk_dict(project, str(file), 3000 + i, content, {
                     "source": "digest", "project": project, "type": "bean",
                     "name": bean.get("name", "bean"), "class_name": bean.get("name"),
                 }))
+                # Separate method-call-graph chunk for targeted retrieval
+                if method_calls:
+                    mcg_content = f"Method call graph for {bean.get('name')} [{project}]:\n"
+                    mcg_content += "\n".join(
+                        f"  {m}() calls: {', '.join(calls)}"
+                        for m, calls in method_calls.items()
+                    )
+                    rows.append(self._chunk_dict(project, str(file), 3500 + i, mcg_content, {
+                        "source": "digest", "project": project, "type": "method_call_graph",
+                        "name": bean.get("name", "bean"), "class_name": bean.get("name"),
+                    }))
 
             # Exception handlers
             for i, eh in enumerate(data.get("exception_handlers", [])):

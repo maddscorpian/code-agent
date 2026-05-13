@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 from pathlib import Path
 
 from dotenv import load_dotenv
@@ -140,6 +141,153 @@ def get_auth_flow(_: str = "") -> str:
 
 
 # ------------------------------------------------------------------
+# Deep search tools (Phase 4 improvements — Changes 1-3)
+# ------------------------------------------------------------------
+
+def _hit_key(hit: dict) -> str:
+    md = hit.get("metadata", {})
+    return (
+        f"{md.get('project','')}::{md.get('file_path','')}::"
+        f"{md.get('class_name','')}::{md.get('method_name','')}::"
+        f"{hash(hit.get('content',''))}"
+    )
+
+
+def _rerank_hits(hits: list[dict], question: str) -> list[dict]:
+    stop = {"what", "how", "does", "the", "and", "for", "with", "that", "this",
+            "which", "when", "where", "from", "into", "about", "have", "been"}
+    q_words = {w.lower() for w in re.findall(r'\b\w{4,}\b', question.lower())
+               if w.lower() not in stop}
+
+    def score(h: dict) -> float:
+        md = h.get("metadata", {})
+        searchable = (h.get("content", "") + " " + str(md)).lower()
+        word_score = sum(1 for w in q_words if w in searchable)
+        src_boost = {"digest": 1.5, "graph": 1.2, "code": 0.0}.get(md.get("source", "code"), 0.0)
+        type_boost = {
+            "method_call_graph": 1.0, "endpoint": 0.8, "bean": 0.6,
+            "entity": 0.5, "feign": 0.5,
+        }.get(md.get("type", ""), 0.0)
+        dist_score = max(0.0, 1.0 - h.get("distance", 1.0))
+        return word_score + src_boost + type_boost + dist_score
+
+    return sorted(hits, key=score, reverse=True)
+
+
+def search_deep(query: str) -> str:
+    """
+    Multi-hop, re-ranked semantic search for deep questions.
+    Runs 8 targeted query variants, follows class name references one hop,
+    re-ranks by question relevance. Returns up to 30 chunks.
+    """
+    embedder = Embedder()
+    store = VectorStore(os.getenv("CHROMA_PATH", "./vector_db"))
+
+    # Build targeted variants (Change 3)
+    variants = [
+        query,
+        f"service method implementation business logic: {query}",
+        f"REST endpoint controller handler DTO: {query}",
+        f"entity repository database query: {query}",
+        f"configuration properties Feign Kafka event: {query}",
+        f"Angular component service HTTP call: {query}",
+        f"method call graph dependencies: {query}",
+    ]
+    svc = re.search(r'ms-java-[\w-]+|module-java-[\w-]+', query)
+    if svc:
+        variants.append(f"{svc.group(0)}: {query}")
+    cls = re.search(r'\b([A-Z][a-z]+(?:[A-Z][a-z]+)+)\b', query)
+    if cls:
+        variants.append(f"{cls.group(1)} method calls dependencies implementation")
+
+    merged: dict[str, dict] = {}
+    for v in variants[:8]:
+        qvec = embedder.embed_query(v)
+        for hit in store.query(qvec, n_results=12):
+            key = _hit_key(hit)
+            if key not in merged or hit.get("distance", 9e9) < merged[key].get("distance", 9e9):
+                merged[key] = hit
+
+    # Multi-hop: follow class names found in initial results (Change 1)
+    found_names: set[str] = set()
+    for hit in merged.values():
+        found_names.update(re.findall(r'\b([A-Z][a-z]+(?:[A-Z][a-z]+)+)\b', hit.get("content", "")))
+    skip_common = {"Optional", "ResponseEntity", "HttpStatus", "List", "Map",
+                   "String", "Long", "Integer", "Boolean", "Object"}
+    for name in [n for n in found_names if n not in skip_common][:8]:
+        qvec = embedder.embed_query(f"{name} implementation method calls")
+        for hit in store.query(qvec, n_results=4):
+            key = _hit_key(hit)
+            if key not in merged:
+                merged[key] = hit
+
+    # Re-rank and cap (Change 2)
+    ranked = _rerank_hits(list(merged.values()), query)[:30]
+
+    return "\n\n".join(
+        "[{i}] project={p} type={t} file={f} class={c} method={m}\n{content}".format(
+            i=i + 1,
+            p=h["metadata"].get("project", ""),
+            t=h["metadata"].get("type", ""),
+            f=h["metadata"].get("file_path", "digest"),
+            c=h["metadata"].get("class_name", ""),
+            m=h["metadata"].get("method_name", ""),
+            content=h.get("content", ""),
+        )
+        for i, h in enumerate(ranked)
+    )
+
+
+def get_method_calls(class_name: str) -> str:
+    """
+    Look up the method call graph for a class from the digest.
+    Input: "ClassName" or "service-name::ClassName"
+    Shows which injected dependency methods each service method calls.
+    """
+    project_filter: str | None = None
+    if "::" in class_name:
+        project_filter, class_name = class_name.split("::", 1)
+    class_name = class_name.strip()
+
+    for f in DIGESTS.glob("*.digest.json"):
+        if f.name == "master.digest.json":
+            continue
+        try:
+            data = json.loads(f.read_text(encoding="utf-8"))
+        except Exception:
+            continue
+        if project_filter and data.get("project") != project_filter:
+            continue
+
+        for bean in data.get("beans", []):
+            if bean.get("name", "").lower() == class_name.lower():
+                project = data.get("project", "unknown")
+                method_calls = bean.get("method_calls", {})
+                queries = bean.get("queries", [])
+
+                if not method_calls and not queries:
+                    return (
+                        f"{class_name} found in {project} but no method call graph available. "
+                        f"Run /reindex to rebuild — method call extraction requires a fresh digest."
+                    )
+                lines = [f"Method call graph for {class_name} [{project}]:"]
+                for method, calls in method_calls.items():
+                    lines.append(f"  {method}() calls:")
+                    for call in calls:
+                        lines.append(f"    → {call}")
+                if queries:
+                    lines.append(f"\n@Query methods ({len(queries)}):")
+                    for q in queries[:5]:
+                        lines.append(f"  {q[:200]}")
+                return "\n".join(lines)
+
+    return (
+        f"Class '{class_name}' not found as a @Service/@Repository bean in any digest. "
+        f"It may be a controller, DTO, or not yet indexed — run /reindex."
+    )
+
+
+# ------------------------------------------------------------------
 # Graph traversal tools  (Phase 2)
 # ------------------------------------------------------------------
 
@@ -184,6 +332,8 @@ def build_tools_map() -> dict:
     return {
         "search_codebase": search_codebase,
         "search_by_project": search_by_project,
+        "search_deep": search_deep,
+        "get_method_calls": get_method_calls,
         "get_all_endpoints": get_all_endpoints,
         "get_api_contracts": get_api_contracts,
         "get_service_dependencies": get_service_dependencies,
@@ -204,6 +354,18 @@ def build_tools() -> list[Tool]:
              description="Semantic vector search over the indexed codebase. Use for finding code by concept."),
         Tool(name="search_by_project", func=search_by_project,
              description="Project-scoped semantic search. Input format: '<project>::<query>'"),
+        Tool(name="search_deep", func=search_deep,
+             description=(
+                 "Multi-hop re-ranked deep search. Runs 8 targeted query variants, follows class name "
+                 "references one hop, and re-ranks by question relevance. Use this instead of "
+                 "search_codebase for deep/architecture/flow questions."
+             )),
+        Tool(name="get_method_calls", func=get_method_calls,
+             description=(
+                 "Look up the method call graph for a @Service or @Repository class from the digest. "
+                 "Shows which injected dependency methods each service method calls. "
+                 "Input: 'ClassName' or 'service-name::ClassName'."
+             )),
         # Digest tools
         Tool(name="get_all_endpoints", func=get_all_endpoints,
              description="List all REST endpoints and beans for a service. Input: service name."),
