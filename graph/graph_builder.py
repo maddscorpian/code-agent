@@ -6,6 +6,8 @@ from collections import defaultdict
 from datetime import datetime, timezone
 from pathlib import Path
 
+from graph.feature_graph import FeatureGraphBuilder, _infer_backend_project
+
 
 class GraphBuilder:
     """
@@ -40,6 +42,7 @@ class GraphBuilder:
         edges: list[dict] = []
 
         service_digests, angular_digest, master_digest = self._load_all_digests()
+        spring_projects = [svc["project"] for svc in service_digests]
 
         # Phase 1 – nodes (must be complete before building edges)
         for svc in service_digests:
@@ -51,9 +54,16 @@ class GraphBuilder:
         for svc in service_digests:
             edges.extend(self._build_spring_edges(nodes, svc))
         if angular_digest:
-            edges.extend(self._build_angular_edges(nodes, angular_digest))
+            edges.extend(self._build_angular_edges(nodes, angular_digest, spring_projects))
         if master_digest:
             edges.extend(self._build_master_edges(nodes, master_digest))
+
+        # Phase 3 – user function graph (feature nodes + feature edges)
+        if angular_digest:
+            feature_builder = FeatureGraphBuilder(angular_digest, nodes, spring_projects)
+            feature_nodes, feature_edges = feature_builder.build()
+            nodes.update(feature_nodes)
+            edges.extend(feature_edges)
 
         # Deduplicate edges
         seen: set[tuple] = set()
@@ -272,7 +282,8 @@ class GraphBuilder:
 
         return edges
 
-    def _build_angular_edges(self, nodes: dict, angular: dict) -> list[dict]:
+    def _build_angular_edges(self, nodes: dict, angular: dict,
+                             spring_projects: list[str] | None = None) -> list[dict]:
         edges: list[dict] = []
         project = angular["project"]
 
@@ -286,6 +297,7 @@ class GraphBuilder:
                                             f"{comp['name']} uses {svc_type}"))
 
         # Angular service → backend endpoint (from http_calls)
+        connected_services: set[str] = set()
         for svc in angular.get("services", []):
             svc_nid = f"angular_service::{project}::{svc['name']}"
             for call in svc.get("http_calls", []):
@@ -298,6 +310,22 @@ class GraphBuilder:
                 if ep_nid:
                     edges.append(self._edge(svc_nid, ep_nid, "http_call",
                                             f"{svc['name']}.{method.lower()}() → {path}"))
+                    connected_services.add(svc_nid)
+
+        # Naming-convention fallback: Angular service → backend service bean
+        if spring_projects:
+            for svc in angular.get("services", []):
+                svc_nid = f"angular_service::{project}::{svc['name']}"
+                if svc_nid in connected_services:
+                    continue
+                target_project = _infer_backend_project(svc["name"], spring_projects)
+                if target_project:
+                    target_bean = self._find_any_service_bean(nodes, target_project)
+                    if target_bean:
+                        edges.append(self._edge(
+                            svc_nid, target_bean["id"], "inferred_http_call",
+                            f"{svc['name']} → {target_project} (inferred by name)",
+                        ))
 
         return edges
 

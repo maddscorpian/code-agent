@@ -208,6 +208,152 @@ class GraphStore:
 
         return "\n".join(lines)
 
+    def list_features(self, project_filter: str = "") -> str:
+        """List all detected user functions (features) with their entry components and backend projects."""
+        if self.is_empty():
+            return "Knowledge graph not built. Run /reindex to build it."
+
+        feature_nodes = [
+            n for n in self._nodes.values()
+            if n.get("type") == "user_function"
+            and (not project_filter or n.get("project", "").lower() == project_filter.lower())
+        ]
+
+        if not feature_nodes:
+            return (
+                f"No user functions found{f' for {project_filter}' if project_filter else ''}. "
+                "Run /reindex to rebuild the graph."
+            )
+
+        lines = [f"User Functions ({len(feature_nodes)} detected):"]
+        for fn in sorted(feature_nodes, key=lambda x: x.get("name", "")):
+            entry = fn.get("entry_components", [])[:2]
+            backends = fn.get("backend_projects", [])
+            line = f"\n  • {fn['name']} [{fn.get('project', '')}]"
+            if entry:
+                line += f"\n    entry: {', '.join(entry)}"
+            if backends:
+                line += f"\n    backend: {', '.join(backends)}"
+            svc_count = len(fn.get("angular_services", []))
+            if svc_count:
+                line += f"\n    angular services: {svc_count}"
+            lines.append(line)
+
+        return "\n".join(lines)
+
+    def describe_feature(self, feature_name: str) -> str:
+        """Full end-to-end trace for a user function: Angular → services → Spring backend → repos."""
+        if self.is_empty():
+            return "Knowledge graph not built. Run /reindex to build it."
+
+        feature_name_lower = feature_name.lower()
+        feature_nodes = [n for n in self._nodes.values() if n.get("type") == "user_function"]
+
+        match = next((fn for fn in feature_nodes
+                      if fn.get("name", "").lower() == feature_name_lower), None)
+        if not match:
+            match = next((fn for fn in feature_nodes
+                          if feature_name_lower in fn.get("name", "").lower()
+                          or feature_name_lower in fn.get("feature_key", "").lower()), None)
+
+        if not match:
+            available = ", ".join(fn.get("name", "") for fn in feature_nodes[:15])
+            return f"User function '{feature_name}' not found. Available: {available}"
+
+        nid = match["id"]
+        project = match.get("project", "")
+        name = match.get("name", "")
+
+        lines = [
+            f"\n{'='*60}",
+            f"User Function: {name} [{project}]",
+            "=" * 60,
+        ]
+
+        # All components in this feature (incoming part_of_feature edges)
+        all_comps = [
+            self._nodes[e["from"]]
+            for e in self._in.get(nid, [])
+            if e["type"] == "part_of_feature" and e["from"] in self._nodes
+        ]
+        entry_comps = set(match.get("entry_components", []))
+        if all_comps:
+            lines.append("\n[Angular Components]")
+            for comp in all_comps[:10]:
+                comp_name = comp.get("name", "")
+                marker = "* " if comp_name in entry_comps else "  "
+                lines.append(f"  {marker}{comp_name}")
+                services = comp.get("injected_services", [])
+                if services:
+                    lines.append(f"      uses: {', '.join(services[:4])}")
+            if len(all_comps) > 10:
+                lines.append(f"  ... and {len(all_comps) - 10} more components")
+
+        # Angular services (feature_uses edges)
+        ang_svc_nodes = [
+            self._nodes[e["to"]]
+            for e in self._out.get(nid, [])
+            if e["type"] == "feature_uses" and e["to"] in self._nodes
+        ]
+        if ang_svc_nodes:
+            lines.append("\n[Angular Services]")
+            for svc in ang_svc_nodes:
+                http_calls = svc.get("http_calls", [])
+                lines.append(f"  {svc.get('name', '')}")
+                for call in http_calls[:3]:
+                    lines.append(f"    → {call.get('method', 'GET')} {call.get('url', '')}")
+
+        # Spring backend (feature_calls edges)
+        spring_svc_nodes = [
+            self._nodes[e["to"]]
+            for e in self._out.get(nid, [])
+            if e["type"] == "feature_calls" and e["to"] in self._nodes
+        ]
+        if spring_svc_nodes:
+            by_project: dict[str, list[dict]] = defaultdict(list)
+            for svc in spring_svc_nodes:
+                by_project[svc.get("project", "unknown")].append(svc)
+
+            for proj, svcs in sorted(by_project.items()):
+                lines.append(f"\n[Backend: {proj}]")
+                for svc in svcs:
+                    methods = svc.get("methods", [])[:6]
+                    lines.append(f"  {svc.get('name', '')}")
+                    if methods:
+                        lines.append(f"    methods: {', '.join(methods)}")
+                    # Repos and entities this service depends on
+                    for dep_edge in self._out.get(svc["id"], []):
+                        dep = self._nodes.get(dep_edge["to"])
+                        if dep and dep.get("type") in ("spring_repository", "entity"):
+                            dep_methods = dep.get("methods", [])[:4]
+                            lines.append(
+                                f"    [{dep.get('type', '')}] {dep.get('name', '')}"
+                                + (f": {', '.join(dep_methods)}" if dep_methods else "")
+                            )
+
+        # Kafka events
+        events_out = [
+            self._nodes[e["to"]]
+            for e in self._out.get(nid, [])
+            if e["type"] == "produces_event" and e["to"] in self._nodes
+        ]
+        events_in = [
+            self._nodes[e["from"]]
+            for e in self._in.get(nid, [])
+            if e["type"] == "consumes_event" and e["from"] in self._nodes
+        ]
+        lines.append("\n[Events]")
+        lines.append(
+            f"  Produces: {', '.join(n.get('name', '') for n in events_out)}"
+            if events_out else "  Produces: (none detected)"
+        )
+        lines.append(
+            f"  Consumes: {', '.join(n.get('name', '') for n in events_in)}"
+            if events_in else "  Consumes: (none detected)"
+        )
+
+        return "\n".join(lines)
+
     def summary(self) -> str:
         """Return a short human-readable graph summary."""
         if self.is_empty():

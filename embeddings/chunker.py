@@ -31,6 +31,7 @@ class Chunker:
         chunks.extend(self._digest_chunks())
         chunks.extend(self._code_chunks())
         chunks.extend(self._graph_chunks())
+        chunks.extend(self._feature_chunks())
         return chunks
 
     # ------------------------------------------------------------------
@@ -268,6 +269,115 @@ class Chunker:
                     "source": "graph", "project": project,
                     "type": f"graph_{node.get('type', 'node')}",
                     "name": name, "class_name": name,
+                },
+            ))
+
+        return rows
+
+    # ------------------------------------------------------------------
+    # User-function feature chunks (one chunk per detected user function)
+    # ------------------------------------------------------------------
+
+    def _feature_chunks(self) -> list[dict]:
+        """
+        Generate one descriptive chunk per user_function node in the knowledge graph.
+        Traverses part_of_feature, feature_uses, feature_calls edges to build a complete picture.
+        """
+        from collections import defaultdict as _dd
+
+        graph_path = self.root / "graph" / "knowledge_graph.json"
+        if not graph_path.exists():
+            return []
+        try:
+            data = json.loads(graph_path.read_text(encoding="utf-8"))
+        except Exception:
+            return []
+
+        nodes: dict[str, dict] = data.get("nodes", {})
+        edges: list[dict] = data.get("edges", [])
+
+        out_edges: dict[str, list[dict]] = _dd(list)
+        in_edges: dict[str, list[dict]] = _dd(list)
+        for edge in edges:
+            out_edges[edge["from"]].append(edge)
+            in_edges[edge["to"]].append(edge)
+
+        rows: list[dict] = []
+        for nid, node in nodes.items():
+            if node.get("type") != "user_function":
+                continue
+
+            project = node.get("project", "")
+            name = node.get("name", "")
+            lines = [f"User Function: {name} [{project}]", ""]
+
+            # Entry components
+            entry_comps = node.get("entry_components", [])
+            if entry_comps:
+                lines.append(f"Entry components: {', '.join(entry_comps)}")
+
+            # All components that are part of this feature
+            all_comps = [
+                nodes[e["from"]].get("name", "")
+                for e in in_edges.get(nid, [])
+                if e["type"] == "part_of_feature" and e["from"] in nodes
+            ]
+            if len(all_comps) > len(entry_comps):
+                lines.append(f"All components ({len(all_comps)}): {', '.join(all_comps[:12])}")
+
+            # Angular services
+            ang_services = node.get("angular_services", [])
+            if ang_services:
+                lines.append(f"Angular services used: {', '.join(ang_services)}")
+
+            # Backend microservices
+            backend_projects = node.get("backend_projects", [])
+            if backend_projects:
+                lines.append(f"Backend microservices: {', '.join(backend_projects)}")
+
+            # Spring services (follow feature_calls edges)
+            spring_svcs: list[str] = []
+            repos: list[str] = []
+            for edge in out_edges.get(nid, []):
+                if edge["type"] != "feature_calls":
+                    continue
+                target = nodes.get(edge["to"])
+                if not target:
+                    continue
+                svc_name = target.get("name", "")
+                methods = target.get("methods", [])[:5]
+                spring_svcs.append(
+                    f"{svc_name}({', '.join(methods)})" if methods else svc_name
+                )
+                # Follow depends_on / manages to repos and entities
+                for dep_edge in out_edges.get(edge["to"], []):
+                    if dep_edge["type"] in ("depends_on", "manages"):
+                        dep = nodes.get(dep_edge["to"])
+                        if dep and dep.get("type") in ("spring_repository", "entity"):
+                            dep_name = dep.get("name", "")
+                            dep_methods = dep.get("methods", [])[:4]
+                            repos.append(
+                                f"{dep_name}({', '.join(dep_methods)})" if dep_methods else dep_name
+                            )
+
+            if spring_svcs:
+                lines.append(f"Backend services: {'; '.join(spring_svcs)}")
+            if repos:
+                lines.append(f"Repositories/Entities: {', '.join(set(repos))}")
+
+            content = "\n".join(lines)
+            rows.append(self._chunk_dict(
+                project,
+                "graph/knowledge_graph.json",
+                abs(hash(nid)) % (10 ** 8),
+                content,
+                {
+                    "source": "graph",
+                    "project": project,
+                    "type": "user_function",
+                    "name": name,
+                    "feature_key": node.get("feature_key", ""),
+                    "class_name": name,
                 },
             ))
 

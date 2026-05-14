@@ -41,8 +41,10 @@ class SpringBootParser:
     def __init__(self, project_path: str):
         self.project_path = Path(project_path)
         self._pom = PomParser()
+        self._constants: dict[str, str] = {}
 
     def parse(self) -> ServiceDigest:
+        self._constants = self._build_constant_map()
         project = self.project_path.name
         java_files = list(self.project_path.rglob("*.java"))
 
@@ -352,29 +354,37 @@ class SpringBootParser:
     def _parse_controllers(self, text: str) -> list[EndpointDigest]:
         if "@RestController" not in text and "@Controller" not in text:
             return []
-        class_base = self._annotation_value(text, r"@RequestMapping\((.*?)\)") or ""
+        raw_base = self._annotation_value(text, r"@RequestMapping\((.*?)\)") or ""
+        class_base = self._extract_path_from_mapping_args(raw_base) if raw_base else ""
         controller_name = self._class_name(text) or "UnknownController"
         rows: list[EndpointDigest] = []
 
+        # Locate where the class body opens so we skip the class-level @RequestMapping
+        cls_decl = re.search(r'\bclass\s+\w+', text)
+        class_body_start = text.find("{", cls_decl.start() if cls_decl else 0) + 1
+
         method_pattern = re.compile(
-            r"(@(?:GetMapping|PostMapping|PutMapping|DeleteMapping|PatchMapping|RequestMapping)\((.*?)\)[\s\S]*?)"
+            r"(@(?:GetMapping|PostMapping|PutMapping|DeleteMapping|PatchMapping|RequestMapping)\((.*?)\))"
+            r"(?:\s*@(?!(?:Get|Post|Put|Delete|Patch)Mapping|Rest|Controller|RequestMapping\b)[^\n]*)*\s*"
             r"(public\s+([A-Za-z0-9_<>, ?]+)\s+([A-Za-z0-9_]+)\s*\((.*?)\))",
             re.MULTILINE,
         )
         for m in method_pattern.finditer(text):
             ann_block, ann_args, _, response_type, handler, params = m.groups()
+            # Include 200 chars before the match to catch @PreAuthorize placed above the mapping
+            context = text[max(0, m.start() - 200): m.end()]
             ann_name = re.search(r"@([A-Za-z]+)\(", ann_block)
             ann = ann_name.group(1) if ann_name else "RequestMapping"
             http_method = HTTP_ANN_TO_METHOD.get(ann, "GET")
             if ann == "RequestMapping":
-                req_method = re.search(r"RequestMethod\.([A-Z]+)", ann_block)
+                req_method = re.search(r"RequestMethod\.([A-Z]+)", context)
                 if req_method:
                     http_method = req_method.group(1)
             method_path = self._extract_path_from_mapping_args(ann_args)
             full_path = self._join_paths(class_base, method_path)
             request_dto = self._extract_request_body_type(params)
-            roles = self._extract_roles(ann_block)
-            auth_required = bool(roles) or "@PreAuthorize" in ann_block or "@Secured" in ann_block
+            roles = self._extract_roles(context)
+            auth_required = bool(roles) or "@PreAuthorize" in context or "@Secured" in context
             javadoc = self._extract_javadoc_before(text, ann_block[:30])
             rows.append(
                 EndpointDigest(
@@ -508,13 +518,48 @@ class SpringBootParser:
             return m.group(1)
         return raw.strip('"')
 
-    @staticmethod
-    def _extract_path_from_mapping_args(args: str) -> str:
+    def _extract_path_from_mapping_args(self, args: str) -> str:
+        """Extract path from mapping annotation args, resolving Java constants when needed."""
+        # Named arg with quoted value
         key_match = re.search(r'(?:path|value)\s*=\s*"([^"]+)"', args)
         if key_match:
             return key_match.group(1)
+        # Direct quoted string
         quote = re.search(r'"([^"]+)"', args)
-        return quote.group(1) if quote else ""
+        if quote:
+            return quote.group(1)
+        # Constant reference: strip optional "value = " / "path = " prefix then look up
+        stripped = re.sub(r'^(?:path|value)\s*=\s*', '', args.strip())
+        const_m = re.search(r'\b([A-Z]\w*(?:\.[A-Z_]\w*)*)\b', stripped)
+        if const_m:
+            ref = const_m.group(1)
+            resolved = self._constants.get(ref)
+            if not resolved:
+                # Try just the field name after the last dot
+                short = ref.rsplit(".", 1)[-1]
+                resolved = self._constants.get(short)
+            if resolved:
+                return resolved
+        return ""
+
+    def _build_constant_map(self) -> dict[str, str]:
+        """Scan all Java files in the project to build ClassName.FIELD → "value" map."""
+        constants: dict[str, str] = {}
+        for file in self.project_path.rglob("*.java"):
+            text = self._safe_read(file)
+            if not text or "static final String" not in text:
+                continue
+            cls = self._class_name(text) or ""
+            for m in re.finditer(
+                r'(?:public\s+|protected\s+|private\s+)?'
+                r'(?:static\s+final|final\s+static)\s+String\s+(\w+)\s*=\s*"([^"]*)"',
+                text,
+            ):
+                field, value = m.group(1), m.group(2)
+                if cls:
+                    constants[f"{cls}.{field}"] = value
+                constants[field] = value   # short form: SITE_BASE_URL → "/api/sites"
+        return constants
 
     @staticmethod
     def _extract_request_body_type(params: str) -> str | None:

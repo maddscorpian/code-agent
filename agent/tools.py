@@ -323,6 +323,23 @@ def graph_summary(_: str = "") -> str:
     return _get_graph().summary()
 
 
+def list_features(project_filter: str = "") -> str:
+    """
+    List all detected user functions/features in the system.
+    Input: project name to filter (e.g. 'pan-portal') or empty string for all.
+    """
+    return _get_graph().list_features(project_filter)
+
+
+def describe_feature(feature_name: str) -> str:
+    """
+    Full end-to-end trace for a named user function.
+    Input: feature name (e.g. 'Book Appointment', 'cancel order', 'move-site').
+    Fuzzy-matched. Returns Angular components → services → Spring beans → repos.
+    """
+    return _get_graph().describe_feature(feature_name)
+
+
 # ------------------------------------------------------------------
 # Tool registry
 # ------------------------------------------------------------------
@@ -344,6 +361,8 @@ def build_tools_map() -> dict:
         "find_callers": find_callers,
         "impact_graph": impact_graph,
         "graph_summary": graph_summary,
+        "list_features": list_features,
+        "describe_feature": describe_feature,
     }
 
 
@@ -399,4 +418,17 @@ def build_tools() -> list[Tool]:
              )),
         Tool(name="graph_summary", func=graph_summary,
              description="Show knowledge graph statistics: node/edge counts by type."),
+        Tool(name="list_features", func=list_features,
+             description=(
+                 "List all detected user functions (features) in the system. "
+                 "Input: project name to filter (e.g. 'pan-portal') or empty string for all. "
+                 "Use when asked 'what can a user do?' or 'what features exist?'"
+             )),
+        Tool(name="describe_feature", func=describe_feature,
+             description=(
+                 "Full end-to-end trace for a named user function/feature. "
+                 "Input: feature name (e.g. 'Book Appointment', 'cancel order'). Fuzzy-matched. "
+                 "Returns: Angular components → Angular services → Spring beans → repositories. "
+                 "Use for 'how does [feature] work?' questions."
+             )),
     ]

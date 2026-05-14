@@ -29,6 +29,8 @@ class PlanResult:
 
 TOOL_CATALOGUE = """\
 Available tools (name: description — input format):
+  describe_feature      : PREFERRED for feature/flow questions — full Angular→Service→Repo trace for one user function — feature name (e.g. "Book Appointment", "cancel order")
+  list_features         : list all detected user functions in the system — project name or "" for all
   search_deep           : PREFERRED for deep/flow/architecture questions — multi-hop re-ranked search across 8 query variants — any query string
   search_codebase       : quick semantic search over all code & digests — any query string
   search_by_project     : project-scoped semantic search — "<project>::<query>"
@@ -59,6 +61,8 @@ PLANNER_PROMPT = """{system}
 Mode: {mode}
 
 Planning guidelines:
+- "how does [feature] work" questions → describe_feature (feature name) + search_deep
+- "what can a user do" / "what features exist" → list_features + search_deep
 - deep/architecture/flow questions → search_deep + trace_request + get_method_calls (for key service classes)
 - "how does X work" questions      → trace_request + search_deep + get_method_calls (on the main service)
 - "who calls X" questions          → find_callers + search_deep
@@ -68,6 +72,7 @@ Planning guidelines:
 - Use 3–6 tool calls; never call the same tool twice with the same input.
 - For deep mode: ALWAYS use search_deep instead of search_codebase — it runs multi-hop retrieval.
 - ALWAYS include get_method_calls when a specific service class is named or implied.
+- ALWAYS use describe_feature when the question is about a named user-facing feature or flow.
 
 Output exactly this JSON (no markdown, no backticks):
 {{"reasoning":"why these tools and inputs","tool_calls":[{{"tool":"tool_name","input":"tool_input"}}]}}
