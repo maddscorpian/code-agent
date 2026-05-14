@@ -242,6 +242,10 @@ class Chunker:
         rows: list[dict] = []
 
         for nid, node in nodes.items():
+            # user_function nodes get richer chunks from _feature_chunks(); skip here
+            if node.get("type") == "user_function":
+                continue
+
             project = node.get("project", "master")
             name = node.get("name", nid)
             label = node.get("label", nid)
@@ -260,10 +264,11 @@ class Chunker:
                 src = nodes.get(edge["from"], {})
                 lines.append(f"  <--[{edge['type']}]-- {src.get('label', edge['from'])}")
 
+            # Use full 64-bit hash (no modulo) — negligible collision probability
             rows.append(self._chunk_dict(
                 project,
-                "graph/knowledge_graph.json",
-                abs(hash(nid)) % (10 ** 9),
+                "graph/nodes",
+                abs(hash(nid)),
                 "\n".join(lines),
                 {
                     "source": "graph", "project": project,
@@ -366,10 +371,12 @@ class Chunker:
                 lines.append(f"Repositories/Entities: {', '.join(set(repos))}")
 
             content = "\n".join(lines)
+            # Use "graph/features" prefix — distinct from "graph/nodes" in _graph_chunks()
+            # so IDs can never collide between the two methods.
             rows.append(self._chunk_dict(
                 project,
-                "graph/knowledge_graph.json",
-                abs(hash(nid)) % (10 ** 8),
+                "graph/features",
+                abs(hash(nid)),
                 content,
                 {
                     "source": "graph",
