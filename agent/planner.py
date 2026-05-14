@@ -61,7 +61,8 @@ PLANNER_PROMPT = """{system}
 Mode: {mode}
 
 Planning guidelines:
-- "how does [feature] work" questions → describe_feature (feature name) + search_deep
+- "how does [feature/module/flow] work" → describe_feature (strip Module/Component suffix, e.g. BookAppointmentSlotModule → "Book Appointment Slot") + search_deep
+- "end to end" / "UI to API" / "frontend to backend" / "from UI" questions → describe_feature (extract the feature/module name) + search_deep
 - "what can a user do" / "what features exist" → list_features + search_deep
 - deep/architecture/flow questions → search_deep + trace_request + get_method_calls (for key service classes)
 - "how does X work" questions      → trace_request + search_deep + get_method_calls (on the main service)
@@ -71,8 +72,8 @@ Planning guidelines:
 - chat/explain questions           → search_codebase + trace_request (if a path is mentioned)
 - Use 3–6 tool calls; never call the same tool twice with the same input.
 - For deep mode: ALWAYS use search_deep instead of search_codebase — it runs multi-hop retrieval.
-- ALWAYS include get_method_calls when a specific service class is named or implied.
-- ALWAYS use describe_feature when the question is about a named user-facing feature or flow.
+- ALWAYS use describe_feature when an Angular Module, Component, or feature name is mentioned alongside "end to end", "flow", "UI", "API", or "trace".
+- For describe_feature input: strip Module/Component/Service suffix from class names (BookAppointmentSlotModule → "Book Appointment Slot").
 
 Output exactly this JSON (no markdown, no backticks):
 {{"reasoning":"why these tools and inputs","tool_calls":[{{"tool":"tool_name","input":"tool_input"}}]}}
@@ -182,12 +183,33 @@ def _default_plan(question: str, mode: str) -> PlanResult:
     q = question.lower()
     calls: list[ToolCall] = []
 
+    _FEATURE_FLOW_WORDS = (
+        "end to end", "end-to-end", "ui to api", "from ui", "from frontend",
+        "frontend to backend", "how does", "how do", "flow", "trace", "walk me",
+    )
+
     if mode == "impact" or any(w in q for w in ("break", "impact", "affect", "risk", "if i change")):
         subject = _extract_subject(question) or question[:40]
         calls.append(ToolCall("impact_graph", subject))
         calls.append(ToolCall("search_codebase", question))
 
-    elif mode == "deep" or any(w in q for w in ("how does", "how do", "explain", "trace", "walk me")):
+    elif any(w in q for w in ("what features", "what can a user", "list features", "what modules")):
+        calls.append(ToolCall("list_features", ""))
+        calls.append(ToolCall("search_deep", question))
+
+    elif any(phrase in q for phrase in _FEATURE_FLOW_WORDS):
+        # Feature/module end-to-end flow question — try describe_feature first
+        subject = _extract_subject(question)  # e.g. "BookAppointmentSlotModule"
+        if subject:
+            calls.append(ToolCall("describe_feature", subject))
+        path = _extract_path(question)
+        if path:
+            calls.append(ToolCall("trace_request", path))
+        calls.append(ToolCall("search_deep", question))
+        if subject and not path:
+            calls.append(ToolCall("get_method_calls", subject))
+
+    elif mode == "deep":
         path = _extract_path(question)
         if path:
             calls.append(ToolCall("trace_request", path))

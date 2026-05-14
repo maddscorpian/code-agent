@@ -241,24 +241,71 @@ class GraphStore:
 
         return "\n".join(lines)
 
+    @staticmethod
+    def _normalize_feature_query(raw: str) -> str:
+        """
+        Normalize a user query to a comparable feature name.
+        'BookAppointmentSlotModule' → 'book appointment slot'
+        'book-appointment-slot'    → 'book appointment slot'
+        """
+        import re
+        q = raw.strip()
+        # Strip known Angular/Java suffixes
+        for suffix in ("Module", "Component", "Service", "Feature", "Page", "View",
+                       "module", "component", "service", "feature", "page", "view"):
+            if q.endswith(suffix) and len(q) > len(suffix):
+                q = q[:-len(suffix)]
+                break
+        # Split PascalCase / camelCase into words
+        words = re.findall(r'[A-Za-z][a-z]*', q)
+        if words:
+            return " ".join(w.lower() for w in words)
+        # Hyphen/underscore separated
+        return q.lower().replace("-", " ").replace("_", " ")
+
     def describe_feature(self, feature_name: str) -> str:
         """Full end-to-end trace for a user function: Angular → services → Spring backend → repos."""
         if self.is_empty():
             return "Knowledge graph not built. Run /reindex to build it."
 
-        feature_name_lower = feature_name.lower()
         feature_nodes = [n for n in self._nodes.values() if n.get("type") == "user_function"]
+        raw_lower = feature_name.lower().strip()
+        normalized = self._normalize_feature_query(feature_name)  # e.g. "book appointment slot"
 
+        match = None
+
+        # 1. Exact name match (case-insensitive)
         match = next((fn for fn in feature_nodes
-                      if fn.get("name", "").lower() == feature_name_lower), None)
+                      if fn.get("name", "").lower() == raw_lower
+                      or fn.get("name", "").lower() == normalized), None)
+
+        # 2. Substring match (both directions)
         if not match:
             match = next((fn for fn in feature_nodes
-                          if feature_name_lower in fn.get("name", "").lower()
-                          or feature_name_lower in fn.get("feature_key", "").lower()), None)
+                          if raw_lower in fn.get("name", "").lower()
+                          or normalized in fn.get("name", "").lower()
+                          or fn.get("name", "").lower() in raw_lower
+                          or fn.get("feature_key", "").replace("-", " ") in normalized
+                          or normalized in fn.get("feature_key", "").replace("-", " ")), None)
+
+        # 3. Word-overlap fallback — pick the feature with the most words in common
+        if not match and normalized:
+            query_words = set(normalized.split())
+            scored = [
+                (fn, len(query_words & set(fn.get("name", "").lower().split())))
+                for fn in feature_nodes
+            ]
+            best_fn, best_score = max(scored, key=lambda x: x[1], default=(None, 0))
+            if best_score >= 2:
+                match = best_fn
 
         if not match:
             available = ", ".join(fn.get("name", "") for fn in feature_nodes[:15])
-            return f"User function '{feature_name}' not found. Available: {available}"
+            return (
+                f"User function '{feature_name}' not found.\n"
+                f"Normalized query: '{normalized}'\n"
+                f"Available features: {available}"
+            )
 
         nid = match["id"]
         project = match.get("project", "")
