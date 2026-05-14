@@ -433,7 +433,9 @@ Leave running. Open a new terminal for the next step.
 ### Step 7 — Build Digests, Graph, and Embeddings
 
 ```bash
-curl -X POST http://localhost:8765/reindex
+curl -X POST http://localhost:8765/reindex \
+  -H "Content-Type: application/json" \
+  -d "{}"
 ```
 
 This single command runs the full pipeline:
