@@ -148,6 +148,44 @@
       .status { font-size: 12px; color: #93c5fd; }
       .hint { font-size: 12px; color: #94a3b8; }
       .label { font-size: 11px; color: #64748b; margin-bottom: 3px; }
+
+      /* ── Sample Prompts panel ───────────────────────────────────── */
+      #promptsOverlay {
+        display: none; position: fixed; inset: 0; z-index: 200;
+        background: rgba(0,0,0,0.55);
+      }
+      #promptsPanel {
+        position: absolute; right: 0; top: 0; bottom: 0; width: 520px;
+        max-width: 96vw;
+        background: #111827; border-left: 1px solid #334155;
+        display: flex; flex-direction: column; overflow: hidden;
+        box-shadow: -8px 0 32px rgba(0,0,0,0.5);
+      }
+      #promptsPanel .ph { color: #fb923c; font-weight: 600; }
+      .p-card {
+        background: #1e293b; border: 1px solid #334155; border-radius: 8px;
+        padding: 10px 12px; cursor: pointer; transition: border-color 0.12s;
+      }
+      .p-card:hover { border-color: #475569; }
+      .p-title { font-size: 13px; font-weight: 600; color: #f1f5f9; }
+      .p-text { font-size: 12px; color: #94a3b8; line-height: 1.55; margin-top: 5px; }
+      .p-tab {
+        flex-shrink: 0; font-size: 11px; padding: 4px 10px; border-radius: 6px;
+        white-space: nowrap; border: 1px solid #334155; background: #1e293b; color: #94a3b8;
+        cursor: pointer;
+      }
+      .p-tab:hover { background: #293548; }
+      .p-tab.active { background: #1e3a5f; color: #93c5fd; border-color: #1e40af; }
+      .mb-chat    { background:#1e3a5f; color:#60a5fa; }
+      .mb-deep    { background:#2d1f5e; color:#a78bfa; }
+      .mb-impact  { background:#451f00; color:#fb923c; }
+      .mb-generate{ background:#14291a; color:#4ade80; }
+      .mode-badge {
+        display: inline-block; font-size: 10px; font-weight: 700;
+        padding: 1px 7px; border-radius: 3px; text-transform: uppercase;
+        letter-spacing: 0.05em; flex-shrink: 0;
+      }
+      #promptsBtn { font-size: 12px; padding: 6px 10px; color: #94a3b8; }
     </style>
   </head>
   <body>
@@ -163,6 +201,7 @@
             <option value="generate">generate</option>
             <option value="impact">impact</option>
           </select>
+          <button id="promptsBtn" type="button">📋 Prompts</button>
           <button id="healthBtn" type="button">Health</button>
           <button id="newSessionBtn" type="button">New Session</button>
           <span id="sessionBadge" class="hint" style="font-size:11px;color:#475569;cursor:default;" title=""></span>
@@ -179,6 +218,20 @@
         </div>
       </div>
     </div>
+
+    <!-- ── Sample Prompts overlay ───────────────────────────────────── -->
+    <div id="promptsOverlay">
+      <div id="promptsPanel">
+        <div style="padding:12px 16px; border-bottom:1px solid #334155; display:flex; align-items:center; gap:10px; flex-shrink:0;">
+          <span style="font-size:15px; font-weight:700; color:#f1f5f9;">Sample Prompts</span>
+          <span style="font-size:11px; color:#64748b; flex:1;">Click any prompt → fills input. Replace <span style="color:#fb923c;">[BRACKETED]</span> values before sending.</span>
+          <button id="closePromptsBtn" style="background:none; border:none; color:#64748b; font-size:22px; cursor:pointer; line-height:1; padding:0 2px;" title="Close">×</button>
+        </div>
+        <div id="promptTabs" style="display:flex; gap:5px; padding:8px 12px; border-bottom:1px solid #334155; overflow-x:auto; flex-shrink:0; scrollbar-width:thin;"></div>
+        <div id="promptsList" style="overflow-y:auto; padding:12px; flex:1; display:flex; flex-direction:column; gap:8px;"></div>
+      </div>
+    </div>
+
     <script>
       const messages = document.getElementById("messages");
       const input = document.getElementById("input");
@@ -493,6 +546,223 @@
 
       // Init session badge
       updateSessionBadge();
+
+      // ── Sample Prompts ───────────────────────────────────────────────
+      const PROMPT_CATEGORIES = [
+        {
+          name: "Architecture", icon: "🏗️",
+          prompts: [
+            { mode:"chat", title:"Platform Overview",
+              text:"What services make up this system and what is each one responsible for? Include how they relate to each other and what the main business domains are." },
+            { mode:"chat", title:"Service Deep Dive",
+              text:"What does [service-name] do, which services does it depend on (Feign + Kafka), and what are its main endpoints and entities?" },
+            { mode:"chat", title:"Frontend Features",
+              text:"What features does the frontend expose to users? List all detected user functions with their entry components and backend microservices." },
+            { mode:"chat", title:"Inter-Service Dependencies",
+              text:"What is the inter-service dependency graph? Which services call which, and via which mechanism (Feign, Kafka, direct REST)?" },
+            { mode:"chat", title:"Authentication Flow",
+              text:"How does JWT authentication work across this platform? Who issues tokens, who validates them, and which Angular interceptor adds the auth header?" },
+            { mode:"chat", title:"Data Model Overview",
+              text:"What are the main JPA entities in this system? List each entity, its table, key fields, and its relationships to other entities." },
+          ],
+        },
+        {
+          name: "End-to-End Flows", icon: "🔁",
+          prompts: [
+            { mode:"deep", title:"Feature End-to-End",
+              text:"How does the [feature-name] feature work end to end? Trace from the Angular component through Angular services, HTTP call, Spring controller, service bean, repository, and database table." },
+            { mode:"deep", title:"Module Trace",
+              text:"For the frontend module [ModuleName]Module give me end-to-end call details from UI to API to repositories. Include Angular services, HTTP URLs, backend controllers, service beans, and DB queries." },
+            { mode:"deep", title:"Endpoint Trace",
+              text:"Trace the complete request flow for [GET/POST/PUT/DELETE] [/api/path]. Show Angular callers, Spring controller, service, repository queries, entity, and any Kafka events produced." },
+            { mode:"deep", title:"User Action Flow",
+              text:"What happens when a user [performs action, e.g. submits a new order]? Trace all services involved, data transformations, Feign calls to downstream services, Kafka events fired, and DB writes." },
+            { mode:"deep", title:"Cross-Service Call Flow",
+              text:"Walk me through how [service-A] calls [service-B]. Show the Feign client interface, resolved URL, request/response DTOs, and what [service-B] does with the request internally." },
+            { mode:"deep", title:"Kafka Event Flow",
+              text:"Trace the [event-topic-name] Kafka event. Who produces it, what triggers production, what is the payload structure, and which services consume it and what do they do?" },
+          ],
+        },
+        {
+          name: "Impact Analysis", icon: "⚡",
+          prompts: [
+            { mode:"impact", title:"Entity Change",
+              text:"What breaks if I change the [EntityName] entity? Which services, Angular components, DTOs, and API contracts are affected? Include risk level." },
+            { mode:"impact", title:"Endpoint Change",
+              text:"What is the impact of modifying endpoint [/api/path] in [service-name]? Which Feign clients call it and which Angular services depend on it?" },
+            { mode:"impact", title:"DTO Field Change",
+              text:"Which services need to change if I add a required field [fieldName] to [DTOName]? Show all callers and consumers of this DTO across services." },
+            { mode:"impact", title:"Shared Module Change",
+              text:"If I refactor [module-java-name] which is a shared module, which microservices import it and need to be rebuilt and tested after the change?" },
+            { mode:"impact", title:"Auth / JWT Change",
+              text:"What is the impact of changing the JWT token structure — adding a new claim or renaming [claim-name]? Which services validate it and which Angular code reads it?" },
+            { mode:"impact", title:"Service Extraction",
+              text:"What breaks if I extract [ClassName] from [service-name] into a new service? Show all callers, Feign clients, and downstream dependencies that need to change." },
+          ],
+        },
+        {
+          name: "API & Schema", icon: "📋",
+          prompts: [
+            { mode:"chat", title:"DTO Structure",
+              text:"What does the [DTOName] request/response look like? Show all fields, Java types, required status, validation annotations (@NotNull, @Size etc.), and @JsonProperty aliases." },
+            { mode:"chat", title:"Service Endpoints",
+              text:"What endpoints does [service-name] expose? List HTTP method, path, auth requirements, required roles, request DTO, and response DTO for each." },
+            { mode:"chat", title:"Feign Client Details",
+              text:"What does [FeignClientName] call in [target-service]? Show the resolved URL from application.properties, all mapped endpoints, request types, and response types." },
+            { mode:"chat", title:"Auth-Required Endpoints",
+              text:"Which endpoints in [service-name] require authentication? List them with their required roles and any @PreAuthorize or @Secured expressions." },
+            { mode:"chat", title:"Downstream Calls",
+              text:"What does [service-name] call downstream? List all Feign clients with their resolved URLs, the property keys used, and all endpoints they map." },
+            { mode:"chat", title:"Repository Queries",
+              text:"What does [RepositoryClassName] in [service-name] query? List all @Query methods with their JPQL/SQL and explain what each returns." },
+          ],
+        },
+        {
+          name: "Solution Design", icon: "🎯",
+          prompts: [
+            { mode:"deep", title:"New Feature Design",
+              text:"I need to add [feature description]. Analyse the existing patterns and propose an implementation approach: which services to modify, what new endpoints to create, what DB schema changes are needed, and what existing patterns to reuse." },
+            { mode:"deep", title:"New Entity Design",
+              text:"I need to create a new entity [EntityName] with fields [field1: Type, field2: Type]. How should I structure it given existing entity patterns? Show similar entities and the full pattern for entity → repository → service → controller." },
+            { mode:"deep", title:"Event-Driven Design",
+              text:"I need to notify downstream services when [action occurs in service-name]. What's the best approach — Kafka event or Feign call? Show existing patterns and propose the implementation including payload DTO." },
+            { mode:"deep", title:"Feign Integration Design",
+              text:"I need [service-A] to call [service-B] for [reason]. Analyse the existing Feign patterns and propose the implementation: Feign interface, configuration class, request/response DTOs, error handling, and property key." },
+            { mode:"deep", title:"Refactoring Plan",
+              text:"I want to refactor [ClassName or feature] in [service-name]. Analyse what it currently does, its callers, and its dependencies. Propose a safe refactoring approach with minimal blast radius." },
+            { mode:"deep", title:"Performance Investigation",
+              text:"The [endpoint path] endpoint in [service-name] may be slow. Trace its full execution path, identify all DB queries it runs, and find potential N+1 queries or missing indexes." },
+          ],
+        },
+        {
+          name: "New Feature / AC", icon: "⚙️",
+          prompts: [
+            { mode:"generate", title:"New REST Endpoint",
+              text:"Add a [GET/POST/PUT/DELETE] endpoint to [ControllerName] in [service-name] for [description]. Follow the existing controller and service patterns exactly — use the same error handling, response structure, auth annotations, logging style, and package structure." },
+            { mode:"generate", title:"New Feign Client",
+              text:"Create a new Feign client in [service-name] to call [target-service]'s [endpoint path] endpoint. Follow the existing Feign client and configuration pattern used in this service. Include the request/response DTOs matching the target service." },
+            { mode:"generate", title:"Full CRUD for New Entity",
+              text:"Add a new entity [EntityName] with fields: [field1: Type, field2: Type]. Generate the JPA entity (with table annotations, indexes, relationships), Spring Data repository, service class with business logic, and REST controller. Follow the exact patterns used for [similar-entity-name]." },
+            { mode:"generate", title:"Add Request Validation",
+              text:"Add request validation to the [endpoint path] endpoint in [service-name]. Use the same @Valid, @NotNull, @Size, and @Pattern annotation patterns and the same error response structure as the rest of this codebase." },
+            { mode:"generate", title:"Kafka Event Publisher",
+              text:"Add a Kafka event publisher to [service-name] that fires a [event-topic-name] event when [triggering action]. Follow the existing kafkaTemplate.send() pattern. Include the event payload DTO and the @Value property for the topic name." },
+            { mode:"generate", title:"New Angular Service",
+              text:"Create a new Angular service in [project] to call [backend-endpoint path]. Follow the existing HTTP service pattern — include the TypeScript model matching the backend DTO, error handling, the same injection pattern, and environment URL usage." },
+            { mode:"generate", title:"Add Pagination",
+              text:"Add pagination support to the [endpoint path] endpoint in [service-name]. Follow the Spring Data Pageable pattern used elsewhere in this codebase. Update the controller, service, and repository. Include the paginated response DTO." },
+            { mode:"generate", title:"Unit Test Class",
+              text:"Generate a unit test class for [ClassName] in [service-name]. Follow the existing test patterns — same mocking framework (Mockito), assertion style, and test naming convention. Cover the [methodName] method with happy path, validation failures, and key edge cases." },
+            { mode:"generate", title:"Flyway Migration",
+              text:"Generate a Flyway migration script to [add column / create table / add index] for [EntityName] in [service-name]. Follow the existing migration file naming convention (V{number}__description.sql) and SQL style used in this service." },
+            { mode:"generate", title:"Exception Handler",
+              text:"Add a @ControllerAdvice exception handler to [service-name] for [ExceptionClassName]. Follow the existing GlobalExceptionHandler pattern — same response structure, logging, and HTTP status mapping." },
+          ],
+        },
+        {
+          name: "Debugging", icon: "🔍",
+          prompts: [
+            { mode:"deep", title:"Root Cause Analysis",
+              text:"Why might [symptom or error, e.g. NullPointerException in OrderService.processOrder] occur? Trace the relevant code path and identify all the places where this failure could originate." },
+            { mode:"chat", title:"Error Handling Audit",
+              text:"What error handling and logging exists for [operation, e.g. appointment booking] in [service-name]? What exceptions are caught, what gets logged, and how are failures surfaced to the caller?" },
+            { mode:"chat", title:"Feign Failure Handling",
+              text:"What happens when a Feign call fails in [service-name]? Is there a circuit breaker, retry logic, timeout config, or fallback? Show the relevant FeignConfig and any @FeignClient error decoder." },
+            { mode:"deep", title:"Missing Data Investigation",
+              text:"[Data/field] is sometimes missing or null in the [entity/response]. Trace the code path that populates this value — from DB query through repository, service, DTO mapping, and API response." },
+            { mode:"chat", title:"Kafka Consumer Failures",
+              text:"What happens if a Kafka message in [service-name] fails to process? Show the error handling, dead-letter topic config, retry behavior, and how to replay failed messages." },
+          ],
+        },
+        {
+          name: "Code Review", icon: "📖",
+          prompts: [
+            { mode:"chat", title:"Explain a Class",
+              text:"Explain what [ClassName] in [service-name] does. Show its dependencies, key methods, what it calls downstream, and how it fits in the overall architecture." },
+            { mode:"chat", title:"Method Call Graph",
+              text:"Show the method call graph for [ServiceClassName] in [service-name]. What does each method call internally and which injected dependencies does it use for each operation?" },
+            { mode:"chat", title:"Explain a Controller",
+              text:"Walk me through [ControllerName] — what endpoints does it handle, what auth is required for each, what service does it delegate to, and what request/response DTOs are involved?" },
+            { mode:"chat", title:"Scheduled Jobs",
+              text:"What scheduled tasks run in [service-name]? List each job with its class, method, cron expression or fixedRate, and what business operation it performs." },
+            { mode:"chat", title:"Security Config",
+              text:"What is the security configuration in [service-name]? Show permit-all paths, authenticated paths, role requirements, JWT filter setup, and CORS configuration." },
+          ],
+        },
+      ];
+
+      function hp(text) {
+        // Highlight [PLACEHOLDER] tokens in amber
+        return text.replace(/\[([^\]]+)\]/g,
+          '<span class="ph">[$1]</span>');
+      }
+
+      function buildPromptsPanel() {
+        const tabs = document.getElementById('promptTabs');
+        const list = document.getElementById('promptsList');
+        let activeIdx = 0;
+
+        function showCategory(idx) {
+          activeIdx = idx;
+          tabs.querySelectorAll('.p-tab').forEach((t, i) =>
+            t.classList.toggle('active', i === idx));
+          renderPrompts(PROMPT_CATEGORIES[idx].prompts);
+        }
+
+        PROMPT_CATEGORIES.forEach((cat, i) => {
+          const tab = document.createElement('button');
+          tab.className = 'p-tab' + (i === 0 ? ' active' : '');
+          tab.textContent = `${cat.icon} ${cat.name}`;
+          tab.addEventListener('click', () => showCategory(i));
+          tabs.appendChild(tab);
+        });
+
+        showCategory(0);
+      }
+
+      function renderPrompts(prompts) {
+        const list = document.getElementById('promptsList');
+        list.innerHTML = '';
+        prompts.forEach(p => {
+          const card = document.createElement('div');
+          card.className = 'p-card';
+          card.innerHTML =
+            `<div style="display:flex;align-items:center;gap:7px;margin-bottom:6px;">` +
+            `<span class="mode-badge mb-${p.mode}">${p.mode}</span>` +
+            `<span class="p-title">${p.title}</span></div>` +
+            `<div class="p-text">${hp(p.text)}</div>`;
+          card.addEventListener('click', () => usePrompt(p));
+          list.appendChild(card);
+        });
+      }
+
+      function usePrompt(p) {
+        document.getElementById('mode').value = p.mode;
+        const ta = document.getElementById('input');
+        ta.value = p.text;
+        document.getElementById('promptsOverlay').style.display = 'none';
+        ta.focus();
+        const first = p.text.indexOf('[');
+        const last  = p.text.indexOf(']', first);
+        if (first >= 0 && last >= 0) ta.setSelectionRange(first, last + 1);
+      }
+
+      document.getElementById('promptsBtn').addEventListener('click', () => {
+        document.getElementById('promptsOverlay').style.display = 'block';
+      });
+      document.getElementById('closePromptsBtn').addEventListener('click', () => {
+        document.getElementById('promptsOverlay').style.display = 'none';
+      });
+      document.getElementById('promptsOverlay').addEventListener('click', e => {
+        if (e.target.id === 'promptsOverlay')
+          document.getElementById('promptsOverlay').style.display = 'none';
+      });
+      document.addEventListener('keydown', e => {
+        if (e.key === 'Escape')
+          document.getElementById('promptsOverlay').style.display = 'none';
+      });
+
+      buildPromptsPanel();
     </script>
   </body>
 </html>
