@@ -39,18 +39,19 @@ A fully local, offline AI agent for Angular + Spring Boot microservice projects.
 ### What It Understands
 
 **Spring Boot:**
-- REST controllers (endpoints, methods, request/response DTOs, auth/roles)
+- REST controllers (endpoints, methods, request/response DTOs, auth/roles) — including multi-line annotation args
 - Service beans (`@Service`) with constructor injection dependencies and method call graphs
 - Repository beans (`@Repository`) with JPQL `@Query` strings
-- JPA entities (fields, relationships, table names)
-- Feign clients (target service + mapped calls)
+- JPA entities (fields, relationships, table names) — Lombok-style (bare private fields), `@Column`, and fully-qualified `@jakarta.persistence.Entity`
+- DTO field structures: `OrderRequest` → all fields with types, `@NotNull`/`@Size` validations, `@JsonProperty` aliases
+- Feign clients with **resolved URLs** from `application.properties` (e.g. `${ms-java.appointments.url}` → `http://ms-java-appointments:8080`) and per-method request/response types
 - Exception handlers (`@ControllerAdvice`)
 - Scheduled tasks (`@Scheduled` cron/fixedRate)
-- Kafka/RabbitMQ producers and consumers
+- Kafka/RabbitMQ events — all patterns: literal topics, `@Value("${kafka.topic}")` field references, `${prop}` placeholders in `@KafkaListener`, array format topics, static constants, Spring Cloud Stream `streamBridge.send()`
 - Security configuration (JWT filters, permit-all paths, OAuth2)
 - Build dependencies (`pom.xml` / `build.gradle`)
 - DB migrations (Flyway `.sql` / Liquibase `changelog.xml`)
-- Per-profile `application-*.yml` config
+- Per-profile `application-*.yml` and `application.properties` config
 - Java constant resolution (`SiteConstant.SITE_BASE_URL` → `/api/v1/sites`)
 
 **Angular:**
@@ -175,12 +176,13 @@ sequenceDiagram
 
 | File | Purpose |
 |---|---|
-| `springboot_parser.py` | Parses Java with `javalang` AST (regex fallback). Extracts endpoints (with Java constant resolution), service/repository beans with method call graphs, entities, Feign clients, events, exception handlers, scheduled tasks. |
+| `springboot_parser.py` | Parses Java with `javalang` AST (regex fallback). Extracts endpoints (with Java constant resolution and multi-line annotation support), service/repository beans with method call graphs, entities, Feign clients with resolved URLs and per-method request/response types, DTO field structures, all Kafka/RabbitMQ event patterns, exception handlers, scheduled tasks. |
 | `angular_parser.py` | Parses TypeScript. Extracts components (inputs, outputs, injected services, template events), services with HTTP calls, routes, NgRx features, environment URLs, interceptors. |
 | `pom_parser.py` | Parses `pom.xml` / `build.gradle` for build dependencies. Scans Flyway SQL and Liquibase XML for migration summaries. |
 | `master_digest_builder.py` | Cross-service map: Angular→backend API contracts, inter-service dependency graph (Feign + Kafka), JWT auth flow, shared DTOs. |
-| `digest_runner.py` | Orchestrates full/single/incremental digest runs. Triggers graph rebuild after every run. |
-| `models.py` | Pydantic v2 schemas: `ServiceDigest`, `AngularDigest`, `BeanDigest`, `NgRxFeature`, `ScheduledTaskDigest`, etc. |
+| `api_catalog_builder.py` | Generates `api-catalog/openapi.json` (OpenAPI 3.0.3 spec) and `api-catalog/api-catalog.md` (Markdown table) from all digest files. Runs automatically after every reindex. |
+| `digest_runner.py` | Orchestrates full/single/incremental digest runs. Triggers graph rebuild and API catalog generation after every run. |
+| `models.py` | Pydantic v2 schemas: `ServiceDigest`, `AngularDigest`, `BeanDigest`, `NgRxFeature`, `ScheduledTaskDigest`, `DtoDigest`, `DtoFieldDigest`, `FeignCallDetail`, etc. |
 
 ### `graph/` — Knowledge Graph
 
@@ -207,13 +209,36 @@ sequenceDiagram
 
 | File | Purpose |
 |---|---|
-| `planner.py` | LLM call #1: decides which tools to invoke. Outputs `{"reasoning": "...", "tool_calls": [...]}`. Falls back to rule-based default plan if JSON parsing fails. |
+| `planner.py` | LLM call #1: decides which tools to invoke. Outputs `{"reasoning": "...", "tool_calls": [...]}`. Rule-based fallback routes "end to end / module X flow" → `describe_feature`; "downstream calls" → `get_external_calls`; "what fields does X have" → `get_dto_schema`. |
 | `loop.py` | Plan → Execute → Synthesize. `stream_run()` emits a `__PLAN__` sentinel so the server sends `event: plan`. Mode-specific synthesis prompts: chat / deep / generate / impact. |
 | `agent_core.py` | Public interface: `run()` and `stream_run()`. Initialises `AgentLoop` with graceful fallback to `RAGChain`. |
 | `rag_chain.py` | Fallback single-shot RAG: embed → retrieve → prompt → LLM. Multi-hop retrieval with 8 query variants and re-ranking by relevance. |
-| `tools.py` | All tool functions (plain Python callables). `build_tools_map()` returns `{name: fn}`. Includes: `search_deep`, `search_codebase`, `trace_request`, `find_callers`, `impact_graph`, `describe_feature`, `list_features`, `get_entity_schema`, `get_method_calls`, `read_source_file`, and more. |
+| `tools.py` | All tool functions (plain Python callables). `build_tools_map()` returns `{name: fn}`. Full tool list below. |
 | `session_store.py` | Thread-safe in-memory session store. 2-hour TTL, max 200 sessions. Last 4 exchanges injected into every prompt. |
 | `code_gen.py` | Parses `### FILE: [MODIFY\|CREATE]` blocks from LLM output. Applies unified diffs using system `patch` with a pure Python fallback. Path-validates against registered project roots. |
+
+**Available agent tools:**
+
+| Tool | Input | Use when |
+|---|---|---|
+| `describe_feature` | feature name (fuzzy) | "How does BookAppointmentSlotModule work end to end?" |
+| `list_features` | project name or `""` | "What features does pan-portal have?" |
+| `search_deep` | any query | Deep architecture/flow questions — runs 8 query variants + multi-hop |
+| `search_codebase` | any query | Quick semantic search |
+| `search_by_project` | `"project::query"` | Project-scoped search |
+| `trace_request` | `/api/path` or `GET /api/path` | Trace endpoint Angular→DB |
+| `find_callers` | class name or path | "Who calls OrderService?" |
+| `impact_graph` | class or entity name | "What breaks if I change X?" |
+| `get_method_calls` | `ClassName` or `service::ClassName` | Service method call graph |
+| `get_dto_schema` | DTO class name | "What fields does OrderRequest have?" |
+| `get_external_calls` | service name or `""` | "What does ms-java-order call downstream?" |
+| `get_all_endpoints` | service name | List all endpoints + beans for a service |
+| `get_entity_schema` | entity class name | JPA entity fields and relationships |
+| `get_api_contracts` | `""` | Angular→backend API contract map |
+| `get_service_dependencies` | `""` | Inter-service dependency tree |
+| `get_auth_flow` | `""` | JWT auth flow summary |
+| `read_source_file` | absolute file path | Read raw source file |
+| `graph_summary` | `""` | Knowledge graph statistics |
 
 ### `api/` — HTTP Layer
 
@@ -221,7 +246,7 @@ sequenceDiagram
 |---|---|
 | `server.py` | FastAPI app. All HTTP endpoints. Manages session store and graph store lifecycle. Handles SSE streaming with plan/session/done events. |
 | `schemas.py` | Pydantic request/response models: `AskRequest`, `AskResponse`, `ApplyRequest`, `ApplyResponse`. |
-| `static/chat.html` | Single-file browser chat UI. Markdown (marked.js) + syntax highlighting (highlight.js), diff renderer with Apply/Copy buttons, session persistence, plan strip showing tools used. |
+| `static/chat.html` | Single-file browser chat UI. Markdown (marked.js) + syntax highlighting (highlight.js), diff renderer with Apply/Copy buttons, session persistence, plan strip showing tools used, **📋 Prompts panel** (50 structured prompts across 8 categories). |
 
 ---
 
@@ -235,8 +260,16 @@ Created by: `python -m digest.digest_runner` or `POST /reindex`
 
 | File | Contents |
 |---|---|
-| `digests/<project>.digest.json` | Per-project structured map: endpoints, beans (with method call graphs), entities, Feign clients, events, exception handlers, scheduled tasks, migrations |
+| `digests/<project>.digest.json` | Per-project structured map: endpoints (with resolved paths), beans (with method call graphs), entities (fields including Lombok-style), DTO schemas (field types, validations, `@JsonProperty`), Feign clients (with resolved URLs + per-method request/response types), events (all Kafka patterns), exception handlers, scheduled tasks, migrations |
 | `digests/master.digest.json` | Cross-service map: Angular→backend API contracts, inter-service dependency graph, JWT auth flow, shared DTOs |
+
+**Key additions in `FeignClientDigest`:**
+- `resolved_url` — actual URL resolved from `application.properties` (e.g. `http://ms-java-appointments:8080`)
+- `url_property_key` — the property key used (e.g. `ms-java.appointments.url`)
+- `call_details` — per-method detail: HTTP method, path, `request_dto`, `response_dto`, path params
+
+**`DtoDigest` / `DtoFieldDigest` (new):**
+Each DTO class gets a structured schema with field names, Java types, required status, `@JsonProperty` aliases, and validation annotations (`@NotNull`, `@Size`, etc.).
 
 ### `graph/knowledge_graph.json` — Knowledge Graph
 
@@ -277,12 +310,27 @@ Contains vectorised chunks with metadata. Chunk types indexed:
 | `endpoint` | REST endpoint: method, path, auth, roles, handler |
 | `bean` | Spring bean: type, dependencies, methods, method call graph, JPQL queries |
 | `entity` | JPA entity: fields, relationships, table name |
+| `dto_schema` | DTO field structure: field names, types, required status, validations, `@JsonProperty`, Feign call cross-references |
 | `angular_service` | Angular service: HTTP calls with resolved URLs |
 | `component` | Angular component: inputs, outputs, injected services |
 | `user_function` | Feature summary: entry components → services → backend → repos (one chunk per feature) |
-| `graph_*` | Graph relationship chunk for each connected node |
+| `graph_nodes` | Graph relationship chunk for each connected node |
+| `graph_features` | Feature-level graph chunk (separate namespace from graph_nodes) |
 | `migration` | DB migration summary |
 | `ngrx` | NgRx actions, effects, selectors |
+
+### `api-catalog/` — OpenAPI Catalog
+
+Created by: automatically after every `POST /reindex`
+
+| File | Contents |
+|---|---|
+| `api-catalog/openapi.json` | OpenAPI 3.0.3 spec — all REST endpoints across all services, path parameters, request/response schemas (with real field definitions from DTO parsing), `bearerAuth` security scheme, roles as `x-roles`, Feign downstream clients as `x-feign-clients` per tag. Load directly into Swagger UI or Postman. |
+| `api-catalog/api-catalog.md` | Markdown table — one section per service listing endpoints (method, path, auth, roles, handler, request DTO) and a downstream Feign clients table showing resolved URLs, property keys, and per-method request/response types. |
+
+Access via API:
+- `GET /api-catalog` — returns `openapi.json`
+- `GET /api-catalog/markdown` — returns `api-catalog.md` as plain text
 
 ---
 
@@ -589,27 +637,43 @@ Open `http://localhost:8765/chat` in your browser.
 ### Interface
 
 ```
-┌──────────────────────────────────────────────────────┐
-│ Mode: [chat▼]  [Health]  [New Session]  session: …  │
-├──────────────────────────────────────────────────────┤
-│                                                      │
-│  You: How does the Book Appointment feature work?    │
-│                                                      │
-│  ┌──────────────────────────────────────────────┐   │
-│  │ Gathered via: [describe_feature] [search_deep]│   │
-│  │                                              │   │
-│  │ Book Appointment Slot is a user function in  │   │
-│  │ pan-portal. Entry component:                 │   │
-│  │ BookAppointmentSlotComponent → uses           │   │
-│  │ AppointmentsService → ms-java-appointments → │   │
-│  │ AppointmentServiceImpl → AppointmentsRepo... │   │
-│  └──────────────────────────────────────────────┘   │
-│                                                      │
-├──────────────────────────────────────────────────────┤
-│ [textarea]                                           │
-│ [Send]  [Reindex]  Ctrl+Enter sends                 │
-└──────────────────────────────────────────────────────┘
+┌──────────────────────────────────────────────────────────────┐
+│ Mode: [chat▼]  [📋 Prompts]  [Health]  [New Session]  …     │
+├──────────────────────────────────────────────────────────────┤
+│                                                              │
+│  You: How does the Book Appointment feature work?            │
+│                                                              │
+│  ┌──────────────────────────────────────────────────────┐   │
+│  │ Gathered via: [describe_feature] [search_deep]        │   │
+│  │                                                      │   │
+│  │ Book Appointment Slot is a user function in pan-     │   │
+│  │ portal. Entry: BookAppointmentSlotComponent → uses    │   │
+│  │ AppointmentsService → ms-java-appointments →          │   │
+│  │ AppointmentServiceImpl → AppointmentsRepository...   │   │
+│  └──────────────────────────────────────────────────────┘   │
+│                                                              │
+├──────────────────────────────────────────────────────────────┤
+│ [textarea]                                                   │
+│ [Send]  [Reindex]  Ctrl+Enter sends                         │
+└──────────────────────────────────────────────────────────────┘
 ```
+
+### 📋 Sample Prompts Panel
+
+Click the **📋 Prompts** button to open a slide-in panel with 50 ready-to-use prompt templates across 8 categories:
+
+| Category | Mode | Examples |
+|---|---|---|
+| 🏗️ Architecture | chat | Platform overview, service deep dive, auth flow, data model |
+| 🔁 End-to-End Flows | deep | Feature trace, module trace, endpoint trace, Kafka event flow |
+| ⚡ Impact Analysis | impact | Entity/DTO/endpoint change blast radius, shared module impact |
+| 📋 API & Schema | chat | DTO field structure, Feign client details, auth-required endpoints |
+| 🎯 Solution Design | deep | New feature design, entity design, event-driven integration |
+| ⚙️ New Feature / AC | generate | New endpoint, Feign client, CRUD, validation, Kafka publisher, tests |
+| 🔍 Debugging | deep/chat | Root cause, error handling, Feign failure, missing data |
+| 📖 Code Review | chat | Explain a class, method call graph, controller walkthrough |
+
+Clicking a prompt: fills the textarea, sets the correct mode, and selects the first `[PLACEHOLDER]` so you can type the real value immediately. Press `Escape` to dismiss.
 
 ### Modes
 
@@ -705,6 +769,13 @@ data: <session-uuid>
 | `GET` | `/graph/callers?q=OrderService` | Find callers of a class/endpoint |
 | `GET` | `/graph/impact?q=Order` | BFS impact analysis |
 
+### API Catalog
+
+| Method | Endpoint | Description |
+|---|---|---|
+| `GET` | `/api-catalog` | OpenAPI 3.0.3 JSON spec — all endpoints, schemas, Feign clients |
+| `GET` | `/api-catalog/markdown` | Markdown endpoint table (plain text) |
+
 ### System
 
 | Method | Endpoint | Description |
@@ -755,6 +826,8 @@ The extension connects to `http://localhost:8765` by default. The API server mus
 
 ## 12. Sample Prompts
 
+> The chat UI has a built-in **📋 Prompts** panel with 50 ready-to-use templates. Click the button in the toolbar — no need to type these from scratch.
+
 ### Understanding the System
 
 ```
@@ -763,6 +836,18 @@ What services make up this platform and what is each one responsible for?
 What APIs does the Angular frontend call and which backend services do those calls land on?
 
 What features does pan-portal expose to users?
+```
+
+### API & Schema Investigation (use `chat` mode)
+
+```
+What does the AppointmentSlotRequest look like? Show all fields, types, required status, and validations.
+
+What endpoints does ms-java-appointments expose? Show auth requirements and request/response DTOs.
+
+What does AppointmentsFeignClient call in ms-java-appointments? Show the resolved URL, all endpoints, request and response types.
+
+What does ms-java-order call downstream? Show all Feign clients with resolved URLs and mapped endpoints.
 ```
 
 ### Feature Traces (use `deep` mode)
