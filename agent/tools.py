@@ -340,6 +340,54 @@ def describe_feature(feature_name: str) -> str:
     return _get_graph().describe_feature(feature_name)
 
 
+def get_dto_schema(dto_name: str) -> str:
+    """
+    Return the field structure of a request/response DTO class.
+    Input: DTO class name (e.g. 'OrderRequest', 'AppointmentSlotResponse').
+    Shows field names, types, required status, @JsonProperty, and validation annotations.
+    """
+    matches: list[str] = []
+    dto_lower = dto_name.lower().strip()
+
+    for f in DIGESTS.glob("*.digest.json"):
+        if f.name == "master.digest.json":
+            continue
+        try:
+            data = json.loads(f.read_text(encoding="utf-8"))
+        except Exception:
+            continue
+        project = data.get("project", "")
+        for dto in data.get("dto_schemas", []):
+            name = dto.get("name", "")
+            if dto_lower not in name.lower():
+                continue
+            lines = [f"DTO: {name} [{project}]  file={dto.get('file_path', '')}"]
+            lines.append(f"{'Field':<30} {'Type':<30} {'Req':>3}  {'Validations'}")
+            lines.append("-" * 80)
+            for fld in dto.get("fields", []):
+                req = "✓" if fld.get("required") else ""
+                jp = f"  @JsonProperty({fld['json_property']!r})" if fld.get("json_property") else ""
+                vals = ", ".join(fld.get("validations", []))
+                lines.append(
+                    f"  {fld['name']:<28} {fld['type']:<30} {req:>3}  {vals}{jp}"
+                )
+            # Also show Feign calls that use this DTO
+            feign_uses: list[str] = []
+            for fc in data.get("feign_clients", []):
+                for cd in fc.get("call_details", []):
+                    if dto_lower in (cd.get("request_dto","").lower(), cd.get("response_dto","").lower()):
+                        feign_uses.append(f"{fc['client_name']}: {cd['method']} {cd['path']}")
+            if feign_uses:
+                lines.append(f"\nUsed in Feign calls:")
+                for u in feign_uses:
+                    lines.append(f"  {u}")
+            matches.append("\n".join(lines))
+
+    if not matches:
+        return f"DTO '{dto_name}' not found in any digest. Run /reindex to rebuild."
+    return "\n\n".join(matches)
+
+
 def get_external_calls(service_filter: str = "") -> str:
     """
     Return all Feign client downstream calls for a service (or all services).
@@ -396,6 +444,7 @@ def build_tools_map() -> dict:
         "list_features": list_features,
         "describe_feature": describe_feature,
         "get_external_calls": get_external_calls,
+        "get_dto_schema": get_dto_schema,
     }
 
 
@@ -469,5 +518,11 @@ def build_tools() -> list[Tool]:
                  "List all Feign client downstream calls for a service with resolved URLs. "
                  "Input: service name (e.g. 'ms-java-order') or empty string for all. "
                  "Use when asked 'what does X call?' or 'what downstream services does X depend on?'"
+             )),
+        Tool(name="get_dto_schema", func=get_dto_schema,
+             description=(
+                 "Return the complete field structure of a request or response DTO class. "
+                 "Input: DTO class name (e.g. 'OrderRequest', 'AppointmentSlotResponse'). "
+                 "Use when asked 'what fields does X have?' or 'what does the API request/response look like?'"
              )),
     ]

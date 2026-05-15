@@ -24,12 +24,35 @@ class EntityDigest(BaseModel):
     relationships: list[str] = Field(default_factory=list)
 
 
+class DtoFieldDigest(BaseModel):
+    name: str
+    type: str
+    required: bool = False
+    json_property: str = ""       # value from @JsonProperty if different from field name
+    validations: list[str] = Field(default_factory=list)   # @NotNull, @Size, etc.
+
+
+class DtoDigest(BaseModel):
+    name: str
+    file_path: str = ""
+    fields: list[DtoFieldDigest] = Field(default_factory=list)
+
+
+class FeignCallDetail(BaseModel):
+    method: str
+    path: str
+    request_dto: str = ""         # @RequestBody type
+    response_dto: str = ""        # unwrapped return type
+    path_params: list[str] = Field(default_factory=list)
+
+
 class FeignClientDigest(BaseModel):
     client_name: str
     target_service: str
     calls: list[str] = Field(default_factory=list)
-    resolved_url: str = ""          # actual URL from application.properties lookup
-    url_property_key: str = ""      # e.g. "ms-java.appointments.url"
+    call_details: list[FeignCallDetail] = Field(default_factory=list)
+    resolved_url: str = ""
+    url_property_key: str = ""
 
 
 class EventDigest(BaseModel):
@@ -67,6 +90,7 @@ class ServiceDigest(BaseModel):
     endpoints: list[EndpointDigest] = Field(default_factory=list)
     entities: list[EntityDigest] = Field(default_factory=list)
     dtos: list[str] = Field(default_factory=list)
+    dto_schemas: list[DtoDigest] = Field(default_factory=list)
     feign_clients: list[FeignClientDigest] = Field(default_factory=list)
     events: EventDigest = Field(default_factory=EventDigest)
     security_config: dict = Field(default_factory=dict)

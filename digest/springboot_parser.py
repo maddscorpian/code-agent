@@ -6,10 +6,13 @@ from typing import Iterable
 
 from .models import (
     BeanDigest,
+    DtoDigest,
+    DtoFieldDigest,
     EndpointDigest,
     EntityDigest,
     EventDigest,
     ExceptionHandlerDigest,
+    FeignCallDetail,
     FeignClientDigest,
     ScheduledTaskDigest,
     ServiceDigest,
@@ -54,6 +57,7 @@ class SpringBootParser:
         entities: list[EntityDigest] = []
         feign_clients: list[FeignClientDigest] = []
         dtos: list[str] = []
+        dto_schemas: list[DtoDigest] = []
         consumes: set[str] = set()
         produces: set[str] = set()
         security_config: dict = {}
@@ -118,6 +122,7 @@ class SpringBootParser:
                 feign_clients.extend(self._parse_feign(text))
 
             dtos.extend(self._parse_dtos(text))
+            dto_schemas.extend(self._parse_dtos_detailed(text, rel))
             c, p = self._parse_events(text)
             consumes.update(c)
             produces.update(p)
@@ -141,6 +146,7 @@ class SpringBootParser:
             endpoints=endpoints,
             entities=entities,
             dtos=sorted(set(dtos)),
+            dto_schemas=dto_schemas,
             feign_clients=feign_clients,
             events=EventDigest(produces=sorted(produces), consumes=sorted(consumes)),
             security_config=security_config,
@@ -426,10 +432,135 @@ class SpringBootParser:
         classes = re.findall(r"class\s+([A-Za-z0-9_]+)", text)
         return [c for c in classes if any(token in c for token in ("DTO", "Dto", "Request", "Response", "Payload"))]
 
+    def _parse_dtos_detailed(self, text: str, rel_path: str) -> list[DtoDigest]:
+        """
+        Extract DTO field structures from Request/Response/DTO/Payload classes.
+        Uses javalang AST when available, falls back to regex.
+        """
+        _DTO_TOKENS = ("DTO", "Dto", "Request", "Response", "Payload", "Model", "Body")
+        if not any(t in text for t in _DTO_TOKENS):
+            return []
+
+        try:
+            import javalang
+            tree = javalang.parse.parse(text)
+            results: list[DtoDigest] = []
+            for _, cls_node in tree.filter(javalang.tree.ClassDeclaration):
+                if not any(t in cls_node.name for t in _DTO_TOKENS):
+                    continue
+                fields = self._extract_dto_fields_ast(cls_node)
+                results.append(DtoDigest(name=cls_node.name, file_path=rel_path, fields=fields))
+            return results
+        except Exception:
+            return self._parse_dtos_detailed_regex(text, rel_path)
+
+    def _extract_dto_fields_ast(self, cls_node) -> list[DtoFieldDigest]:
+        _VALIDATION_ANNS = {
+            "NotNull", "NotEmpty", "NotBlank", "Size", "Min", "Max",
+            "Pattern", "Email", "Valid", "Positive", "Negative", "DecimalMin", "DecimalMax",
+        }
+        fields: list[DtoFieldDigest] = []
+        for field_decl in (cls_node.fields or []):
+            try:
+                field_anns = {a.name: a for a in (field_decl.annotations or [])}
+                # type name
+                ft = field_decl.type
+                type_str = ft.name if hasattr(ft, "name") else str(ft)
+                if hasattr(ft, "arguments") and ft.arguments:
+                    args = ", ".join(
+                        a.type.name if hasattr(a, "type") and hasattr(a.type, "name") else str(a)
+                        for a in ft.arguments
+                    )
+                    type_str = f"{type_str}<{args}>"
+
+                validations = [a for a in field_anns if a in _VALIDATION_ANNS]
+                required = bool({"NotNull", "NotEmpty", "NotBlank"} & set(validations))
+
+                json_prop = ""
+                if "JsonProperty" in field_anns:
+                    ann = field_anns["JsonProperty"]
+                    try:
+                        elem = ann.element
+                        if isinstance(elem, list):
+                            for pair in elem:
+                                if hasattr(pair, "value"):
+                                    json_prop = str(getattr(pair.value, "value", "")).strip('"')
+                        else:
+                            json_prop = str(getattr(elem, "value", "")).strip('"')
+                    except Exception:
+                        pass
+
+                for declarator in (field_decl.declarators or []):
+                    fields.append(DtoFieldDigest(
+                        name=declarator.name,
+                        type=type_str,
+                        required=required,
+                        json_property=json_prop,
+                        validations=validations,
+                    ))
+            except Exception:
+                continue
+        return fields
+
+    def _parse_dtos_detailed_regex(self, text: str, rel_path: str) -> list[DtoDigest]:
+        """Regex fallback for DTO field extraction."""
+        _DTO_TOKENS = ("DTO", "Dto", "Request", "Response", "Payload", "Model", "Body")
+        _SKIP_FIELDS = {"serialVersionUID", "log", "logger", "LOGGER", "INSTANCE"}
+        _VALIDATION_ANNS = {
+            "NotNull", "NotEmpty", "NotBlank", "Size", "Min", "Max",
+            "Pattern", "Email", "Valid", "Positive",
+        }
+
+        results: list[DtoDigest] = []
+        cls_m = re.search(r"(?:public\s+)?class\s+([A-Za-z0-9_]+)\b", text)
+        if not cls_m:
+            return []
+        cls_name = cls_m.group(1)
+        if not any(t in cls_name for t in _DTO_TOKENS):
+            return []
+
+        body_start = text.find("{", cls_m.start())
+        if body_start < 0:
+            return []
+        body = text[body_start:]
+
+        fields: list[DtoFieldDigest] = []
+        field_re = re.compile(
+            r"((?:@\w+(?:\([^)]*\))?\s+)+)?"
+            r"(?:private|protected|public)\s+(?:final\s+)?"
+            r"([\w<>?,\[\] ]+?)\s+([a-z]\w*)\s*[;=]",
+            re.MULTILINE,
+        )
+        for fm in field_re.finditer(body):
+            anns_block = fm.group(1) or ""
+            field_type = fm.group(2).strip()
+            field_name = fm.group(3)
+            if field_name in _SKIP_FIELDS:
+                continue
+
+            validations = re.findall(
+                r"@(" + "|".join(_VALIDATION_ANNS) + r")\b", anns_block
+            )
+            json_prop_m = re.search(r'@JsonProperty\s*\(\s*["\']([^"\']+)["\']', anns_block)
+            json_prop = json_prop_m.group(1) if json_prop_m else ""
+            required = bool({"NotNull", "NotEmpty", "NotBlank"} & set(validations))
+
+            fields.append(DtoFieldDigest(
+                name=field_name,
+                type=field_type,
+                required=required,
+                json_property=json_prop,
+                validations=validations,
+            ))
+
+        if fields:
+            results.append(DtoDigest(name=cls_name, file_path=rel_path, fields=fields))
+        return results
+
     def _parse_feign(self, text: str) -> list[FeignClientDigest]:
         if "@FeignClient" not in text:
             return []
-        # Use [\s\S]*? to capture multi-line @FeignClient annotations
+        # [\s\S]*? captures multi-line @FeignClient annotations
         m = re.search(r"@FeignClient\(([\s\S]*?)\)", text)
         raw = m.group(1) if m else ""
         client_name = self._extract_named_arg(raw, "name") or self._extract_named_arg(raw, "value") or "unknown"
@@ -442,37 +573,73 @@ class SpringBootParser:
         if url_raw:
             prop_m = re.match(r"^\$\{([^}]+)\}$", url_raw.strip())
             if prop_m:
-                url_prop_key = prop_m.group(1)                          # "ms-java.appointments.url"
+                url_prop_key = prop_m.group(1)
                 resolved_url = self._properties.get(url_prop_key, "")
             else:
-                resolved_url = url_raw                                  # already a literal URL
+                resolved_url = url_raw
 
         # Infer target service from resolved URL hostname or property key
         if resolved_url:
             host_m = re.search(r"https?://([^/:]+)", resolved_url)
             if host_m:
-                target = host_m.group(1)                                # "ms-java-appointments"
+                target = host_m.group(1)
         elif url_prop_key:
-            # "ms-java.appointments.url" → strip last segment → join remaining with "-"
             parts = url_prop_key.rstrip(".").split(".")
             if len(parts) >= 2 and parts[-1] in ("url", "host", "base", "uri", "endpoint"):
                 parts = parts[:-1]
-            target = "-".join(parts)                                    # "ms-java-appointments"
+            target = "-".join(parts)
 
+        # Parse each method in the Feign interface with full request/response type info
         calls: list[str] = []
-        for ann, args in re.findall(r"@((?:Get|Post|Put|Delete|Patch)Mapping|RequestMapping)\((.*?)\)", text):
-            path = self._extract_path_from_mapping_args(args)
-            method = HTTP_ANN_TO_METHOD.get(ann, "GET")
+        call_details: list[FeignCallDetail] = []
+
+        feign_method_re = re.compile(
+            r"@((?:Get|Post|Put|Delete|Patch)Mapping|RequestMapping)\((.*?)\)\s*"
+            r"(?:@(?!(?:Get|Post|Put|Delete|Patch)Mapping|RequestMapping)\w+[^\n]*\n\s*)*"
+            r"([\w<>?,\[\] ]+?)\s+(\w+)\s*\(([^)]*)\)\s*;",
+            re.MULTILINE,
+        )
+        for fm in feign_method_re.finditer(text):
+            ann, ann_args, ret_type, _method_name, params = fm.groups()
+            path = self._extract_path_from_mapping_args(ann_args)
+            http_method = HTTP_ANN_TO_METHOD.get(ann, "GET")
             if ann == "RequestMapping":
-                explicit = re.search(r"RequestMethod\.([A-Z]+)", args)
+                explicit = re.search(r"RequestMethod\.([A-Z]+)", ann_args)
                 if explicit:
-                    method = explicit.group(1)
-            calls.append(f"{method} {path}")
+                    http_method = explicit.group(1)
+
+            calls.append(f"{http_method} {path}")
+
+            # Unwrap return type: List<Foo> → Foo, ResponseEntity<Foo> → Foo
+            resp_dto = ret_type.strip()
+            for wrapper in ("ResponseEntity", "List", "Optional", "Mono", "Flux", "Set"):
+                inner_m = re.match(rf"^{wrapper}<(.+)>$", resp_dto)
+                if inner_m:
+                    resp_dto = inner_m.group(1).strip()
+                    break
+
+            # Extract @RequestBody type from params
+            req_dto = ""
+            rb_m = re.search(r"@RequestBody\s+(?:[\w<>]+\s+)?(\w[\w<>]*)\s+\w", params)
+            if rb_m:
+                req_dto = rb_m.group(1)
+
+            # Extract @PathVariable names
+            path_params = re.findall(r"@PathVariable(?:\([^)]*\))?\s+(?:[\w<>]+\s+)?(\w+)", params)
+
+            call_details.append(FeignCallDetail(
+                method=http_method,
+                path=path,
+                request_dto=req_dto,
+                response_dto=resp_dto if resp_dto not in ("void", "Void", "Object") else "",
+                path_params=path_params,
+            ))
 
         return [FeignClientDigest(
             client_name=client_name,
             target_service=target,
             calls=calls,
+            call_details=call_details,
             resolved_url=resolved_url,
             url_property_key=url_prop_key,
         )]

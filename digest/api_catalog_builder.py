@@ -6,6 +6,30 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 
+def _java_type_to_openapi(java_type: str) -> dict:
+    """Map a Java type string to a basic OpenAPI schema dict."""
+    t = java_type.strip().lower()
+    if t in ("string", "char", "character"):
+        return {"type": "string"}
+    if t in ("int", "integer", "long", "short", "byte"):
+        return {"type": "integer"}
+    if t in ("double", "float", "bigdecimal"):
+        return {"type": "number"}
+    if t in ("boolean"):
+        return {"type": "boolean"}
+    if t.startswith("list<") or t.startswith("set<") or t.startswith("collection<"):
+        inner = re.sub(r"^\w+<(.+)>$", r"\1", java_type.strip())
+        return {"type": "array", "items": _java_type_to_openapi(inner)}
+    if t in ("localdate", "localdatetime", "date", "instant", "zoneddatetime"):
+        return {"type": "string", "format": "date-time"}
+    if t in ("uuid"):
+        return {"type": "string", "format": "uuid"}
+    # Object reference
+    if java_type.strip()[0].isupper():
+        return {"$ref": f"#/components/schemas/{java_type.strip()}"}
+    return {"type": "string"}
+
+
 class ApiCatalogBuilder:
     """
     Builds a consolidated API catalog from all digest files.
@@ -157,6 +181,31 @@ class ApiCatalogBuilder:
                     })
                 tags[-1]["x-feign-clients"] = feign_info
 
+        # DTO schemas — real field structures from parsed request/response classes
+        for svc in services:
+            for dto in svc.get("dto_schemas", []):
+                name = dto.get("name", "")
+                if not name or name in schemas:
+                    continue
+                props: dict = {}
+                required_fields: list[str] = []
+                for f in dto.get("fields", []):
+                    prop_name = f.get("json_property") or f.get("name", "")
+                    java_type = f.get("type", "string")
+                    openapi_type = _java_type_to_openapi(java_type)
+                    props[prop_name] = openapi_type
+                    if f.get("required"):
+                        required_fields.append(prop_name)
+                schema: dict = {
+                    "type": "object",
+                    "x-java-class": name,
+                    "x-file": dto.get("file_path", ""),
+                    "properties": props,
+                }
+                if required_fields:
+                    schema["required"] = required_fields
+                schemas[name] = schema
+
         # Entity schemas
         for svc in services:
             for ent in svc.get("entities", []):
@@ -240,17 +289,22 @@ class ApiCatalogBuilder:
                 lines += [
                     f"### Downstream Feign Clients ({len(feigns)})",
                     "",
-                    "| Client | Target Service | Resolved URL | Property Key | Calls |",
-                    "|--------|---------------|-------------|-------------|-------|",
+                    "| Client | Target Service | Resolved URL | Property Key |",
+                    "|--------|---------------|-------------|-------------|",
                 ]
                 for fc in feigns:
                     url = fc.get("resolved_url", "") or "—"
                     prop = fc.get("url_property_key", "") or "—"
                     target = fc.get("target_service", "—")
-                    calls = " · ".join(fc.get("calls", [])[:6]) or "—"
                     lines.append(
-                        f"| `{fc['client_name']}` | `{target}` | `{url}` | `{prop}` | {calls} |"
+                        f"| `{fc['client_name']}` | `{target}` | `{url}` | `{prop}` |"
                     )
+                    for cd in fc.get("call_details", []):
+                        req = f"`{cd['request_dto']}`" if cd.get("request_dto") else "—"
+                        resp = f"`{cd['response_dto']}`" if cd.get("response_dto") else "—"
+                        lines.append(
+                            f"|   | `{cd['method']} {cd['path']}` | req={req} resp={resp} | | |"
+                        )
                 lines.append("")
 
         return "\n".join(lines)

@@ -149,6 +149,27 @@ class Chunker:
                     "source": "digest", "project": project, "type": "build_deps", "name": "dependencies",
                 }))
 
+            # DTO schemas (request/response field structures)
+            for i, dto in enumerate(data.get("dto_schemas", [])):
+                fields_text = "\n".join(
+                    f"  {f['name']}: {f['type']}"
+                    + (" [required]" if f.get("required") else "")
+                    + (f" @JsonProperty({f['json_property']!r})" if f.get("json_property") else "")
+                    + (f" validations={f['validations']}" if f.get("validations") else "")
+                    for f in dto.get("fields", [])
+                )
+                feign_refs = self._find_dto_feign_refs(data, dto.get("name", ""))
+                content = (
+                    f"DTO {dto.get('name')} [{project}] file={dto.get('file_path','')}\n"
+                    f"fields:\n{fields_text or '  (none extracted)'}"
+                )
+                if feign_refs:
+                    content += f"\nUsed in Feign calls: {', '.join(feign_refs)}"
+                rows.append(self._chunk_dict(project, str(file), 8000 + i, content, {
+                    "source": "digest", "project": project, "type": "dto_schema",
+                    "name": dto.get("name", "dto"), "class_name": dto.get("name", ""),
+                }))
+
             # Angular components
             for i, comp in enumerate(data.get("components", [])):
                 content = (
@@ -529,4 +550,14 @@ class Chunker:
     @staticmethod
     def _chunk_dict(project: str, file_path: str, idx: int, content: str, metadata: dict[str, Any]) -> dict:
         return {"id": f"{project}::{file_path}::{idx}", "content": content, "metadata": metadata}
+
+    @staticmethod
+    def _find_dto_feign_refs(digest_data: dict, dto_name: str) -> list[str]:
+        """Find which Feign client calls reference this DTO as request or response."""
+        refs: list[str] = []
+        for fc in digest_data.get("feign_clients", []):
+            for cd in fc.get("call_details", []):
+                if dto_name in (cd.get("request_dto", ""), cd.get("response_dto", "")):
+                    refs.append(f"{fc['client_name']}.{cd.get('method','')} {cd.get('path','')}")
+        return refs
 
