@@ -438,6 +438,117 @@ class GraphStore:
 
         return "\n".join(lines)
 
+    def trace_event_flow(self, query: str) -> str:
+        """
+        Trace the complete flow for a Kafka topic or event-related query.
+        Input: topic name (e.g. "order.events"), partial match, or service name.
+        Returns: publisher endpoint(s) → topic → all consumer services with handler beans.
+        """
+        if self.is_empty():
+            return "Knowledge graph not built. Run /reindex to build it."
+
+        query_lower = query.lower().strip()
+
+        # Find matching kafka_topic nodes
+        topic_nodes = [
+            n for n in self._nodes.values()
+            if n.get("type") == "kafka_topic"
+            and (query_lower in n.get("name", "").lower()
+                 or n.get("name", "").lower() in query_lower)
+        ]
+
+        if not topic_nodes:
+            # Try to find by service name — return all topics for that service
+            service_beans = [
+                n for n in self._nodes.values()
+                if n.get("type") in ("spring_service", "spring_component")
+                and query_lower in n.get("project", "").lower()
+            ]
+            if service_beans:
+                # Collect topics from those beans
+                for bean in service_beans:
+                    for edge in self._out.get(bean["id"], []) + self._in.get(bean["id"], []):
+                        if edge["type"] in ("produces_event", "consumes_event", "publishes_to"):
+                            tn = self._nodes.get(
+                                edge["to"] if edge["type"] != "consumes_event" else edge["from"]
+                            )
+                            if tn and tn not in topic_nodes:
+                                topic_nodes.append(tn)
+
+        if not topic_nodes:
+            return (
+                f"No Kafka topic found matching '{query}'. "
+                "Try the topic name (e.g. 'order.events') or a service name."
+            )
+
+        lines: list[str] = []
+        for topic_node in topic_nodes[:5]:
+            tnid = topic_node["id"]
+            topic_name = topic_node.get("name", tnid)
+
+            lines.append(f"\n{'='*60}")
+            lines.append(f"Kafka Event Flow: {topic_name}")
+            lines.append("=" * 60)
+
+            # ── Publishers (REST endpoints that publish via publishes_to edge)
+            publisher_eps = [
+                self._nodes[e["from"]]
+                for e in self._in.get(tnid, [])
+                if e["type"] == "publishes_to" and e["from"] in self._nodes
+            ]
+            # ── Producers (beans that produce via produces_event)
+            producer_beans = [
+                self._nodes[e["from"]]
+                for e in self._in.get(tnid, [])
+                if e["type"] == "produces_event" and e["from"] in self._nodes
+            ]
+
+            if publisher_eps or producer_beans:
+                lines.append("\n[Producers]")
+                for ep in publisher_eps:
+                    lines.append(f"  REST → {ep.get('label', ep['id'])}")
+                    # Who calls this endpoint? (Angular services, Feign callers)
+                    callers = [
+                        self._nodes[e["from"]]
+                        for e in self._in.get(ep["id"], [])
+                        if e["from"] in self._nodes
+                    ]
+                    for caller in callers[:3]:
+                        lines.append(f"    ↑ called by: {caller.get('label', caller['id'])}")
+                for bean in producer_beans:
+                    lines.append(f"  Bean → {bean.get('label', bean['id'])}")
+            else:
+                lines.append("\n[Producers]")
+                lines.append("  (none detected — reindex after adding @Value topic fields)")
+
+            # ── Topic node
+            lines.append(f"\n[Topic]  {topic_name}")
+
+            # ── Consumers (beans that consume via consumes_event)
+            consumer_beans = [
+                self._nodes[e["to"]]
+                for e in self._out.get(tnid, [])
+                if e["type"] == "consumes_event" and e["to"] in self._nodes
+            ]
+
+            if consumer_beans:
+                lines.append("\n[Consumers]")
+                by_project: dict[str, list] = defaultdict(list)
+                for bean in consumer_beans:
+                    by_project[bean.get("project", "?")].append(bean)
+                for proj, beans in sorted(by_project.items()):
+                    lines.append(f"  {proj}:")
+                    for bean in beans:
+                        methods = bean.get("methods", [])[:4]
+                        lines.append(
+                            f"    {bean.get('name', '?')}"
+                            + (f"  [{', '.join(methods)}]" if methods else "")
+                        )
+            else:
+                lines.append("\n[Consumers]  (none detected)")
+
+        return "\n".join(lines)
+
     def summary(self) -> str:
         """Return a short human-readable graph summary."""
         if self.is_empty():

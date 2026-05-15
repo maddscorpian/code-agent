@@ -16,6 +16,7 @@ class MasterDigestBuilder:
         deps = self._build_dependencies()
         auth_flow = self._build_auth_flow()
         shared_models = self._build_shared_models()
+        kafka_event_flow = self._build_kafka_event_flow()
         projects = [d.project for d in self.service_digests]
         if self.angular_digest:
             projects.append(self.angular_digest.project)
@@ -27,6 +28,7 @@ class MasterDigestBuilder:
             service_dependencies=deps,
             auth_flow=auth_flow,
             shared_models=shared_models,
+            kafka_event_flow=kafka_event_flow,
         )
 
     def _build_api_contracts(self) -> list[ApiContract]:
@@ -84,6 +86,53 @@ class MasterDigestBuilder:
             "validated_by": sorted(set(validated_by)),
             "fe_interceptor": fe_interceptor,
         }
+
+    def _build_kafka_event_flow(self) -> dict:
+        """
+        Build a cross-service Kafka event flow map.
+        Returns: {topic_name: {producers: [...], consumers: [...]}}
+        Each producer/consumer entry: {service, endpoint (if via REST), group_id}
+        """
+        flow: dict[str, dict] = {}
+
+        for svc in self.service_digests:
+            project = svc.project
+
+            # Use structured kafka_topics if available; fall back to raw events
+            producer_topics: list[dict] = []
+            consumer_topics: list[dict] = []
+
+            if svc.kafka_topics:
+                for kt in svc.kafka_topics:
+                    entry = {
+                        "service": project,
+                        "property_key": kt.property_key,
+                        "group_id": kt.group_id,
+                    }
+                    if kt.role in ("producer", "both"):
+                        if kt.publisher_endpoint:
+                            entry["endpoint"] = kt.publisher_endpoint
+                        producer_topics.append({**entry, "topic": kt.topic_name})
+                    if kt.role in ("consumer", "both"):
+                        consumer_topics.append({**entry, "topic": kt.topic_name})
+            else:
+                # Fallback: use raw event strings
+                for t in svc.events.produces:
+                    producer_topics.append({"service": project, "topic": t})
+                for t in svc.events.consumes:
+                    consumer_topics.append({"service": project, "topic": t})
+
+            for pt in producer_topics:
+                topic = pt.pop("topic")
+                flow.setdefault(topic, {"producers": [], "consumers": []})
+                flow[topic]["producers"].append(pt)
+
+            for ct in consumer_topics:
+                topic = ct.pop("topic")
+                flow.setdefault(topic, {"producers": [], "consumers": []})
+                flow[topic]["consumers"].append(ct)
+
+        return flow
 
     def _build_shared_models(self) -> list[str]:
         owners: dict[str, set[str]] = defaultdict(set)

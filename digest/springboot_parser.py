@@ -137,6 +137,10 @@ class SpringBootParser:
                 if text and ("@Entity" in text or "persistence.Entity" in text):
                     entities.extend(self._parse_entities(text))
 
+        kafka_topics = self._build_kafka_topic_configs(consumes, produces, "\n".join(
+            self._safe_read(f) for f in java_files if self._safe_read(f)
+        ))
+
         security_config.update(self._parse_application_config())
 
         return ServiceDigest(
@@ -149,6 +153,7 @@ class SpringBootParser:
             dto_schemas=dto_schemas,
             feign_clients=feign_clients,
             events=EventDigest(produces=sorted(produces), consumes=sorted(consumes)),
+            kafka_topics=kafka_topics,
             security_config=security_config,
             beans=beans,
             exception_handlers=exception_handlers,
@@ -817,6 +822,95 @@ class SpringBootParser:
         produces = {t for t in produces if t and len(t) > 1 and t not in _bad}
 
         return consumes, produces
+
+    def _build_kafka_topic_configs(
+        self, consumes: set[str], produces: set[str], text_all: str
+    ) -> list:
+        """
+        Build structured KafkaTopicConfig entries by cross-referencing detected
+        topics with spring.kafka.* properties and publisher REST endpoints.
+        """
+        from .models import KafkaTopicConfig
+        configs: list[KafkaTopicConfig] = []
+
+        # Build reverse map: topic_value → property_key (e.g. "order.events" → "spring.kafka.consumer.topic")
+        value_to_key: dict[str, str] = {}
+        for key, val in self._properties.items():
+            if "kafka" in key.lower() and ("topic" in key.lower()):
+                value_to_key[val] = key
+
+        # Group ID from properties
+        group_id = (
+            self._properties.get("spring.kafka.consumer.group-id", "")
+            or self._properties.get("kafka.consumer.group-id", "")
+        )
+
+        # Consumer topics
+        for topic in consumes:
+            prop_key = value_to_key.get(topic, "")
+            if not prop_key:
+                # Try to find matching key by value
+                for k, v in self._properties.items():
+                    if v == topic and "topic" in k.lower():
+                        prop_key = k
+                        break
+            configs.append(KafkaTopicConfig(
+                topic_name=topic,
+                role="consumer",
+                property_key=prop_key,
+                group_id=group_id,
+            ))
+
+        # Producer topics — detect if produced via a REST publisher endpoint
+        # Scan for methods that contain BOTH an HTTP mapping AND kafkaTemplate.send()
+        publisher_endpoints: dict[str, str] = {}  # topic → "METHOD /path"
+        method_re = re.compile(
+            r"(@(?:GetMapping|PostMapping|PutMapping|DeleteMapping|PatchMapping|RequestMapping)"
+            r"\(([\s\S]*?)\))[\s\S]{0,600}?kafkaTemplate[\s\S]{0,200}?\.send\s*\(",
+            re.MULTILINE,
+        )
+        # Class-level base path
+        raw_base = self._annotation_value(text_all, r"@RequestMapping\(([\s\S]*?)\)") or ""
+        base = self._extract_path_from_mapping_args(raw_base) if raw_base else ""
+
+        cls_decl = re.search(r'\bclass\s+\w+', text_all)
+        body_start = text_all.find("{", cls_decl.start() if cls_decl else 0) + 1
+        class_body = text_all[body_start:]
+
+        for m in method_re.finditer(class_body):
+            ann_block, ann_args = m.group(1), m.group(2)
+            ann_name = re.search(r"@([A-Za-z]+)\(", ann_block)
+            ann = ann_name.group(1) if ann_name else "RequestMapping"
+            http_method = {"GetMapping": "GET", "PostMapping": "POST", "PutMapping": "PUT",
+                           "DeleteMapping": "DELETE", "PatchMapping": "PATCH"}.get(ann, "POST")
+            path = self._extract_path_from_mapping_args(ann_args)
+            full_path = self._join_paths(base, path) if path else base
+            ep_str = f"{http_method} {full_path}"
+            # Associate all produced topics with this publisher endpoint
+            for topic in produces:
+                if topic not in publisher_endpoints:
+                    publisher_endpoints[topic] = ep_str
+
+        for topic in produces:
+            prop_key = value_to_key.get(topic, "")
+            if not prop_key:
+                for k, v in self._properties.items():
+                    if v == topic and "topic" in k.lower():
+                        prop_key = k
+                        break
+            existing = next((c for c in configs if c.topic_name == topic), None)
+            if existing:
+                existing.role = "both"
+            else:
+                configs.append(KafkaTopicConfig(
+                    topic_name=topic,
+                    role="producer",
+                    property_key=prop_key,
+                    group_id=group_id,
+                    publisher_endpoint=publisher_endpoints.get(topic, ""),
+                ))
+
+        return configs
 
     def _parse_security(self, text: str) -> dict:
         return {

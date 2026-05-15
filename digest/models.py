@@ -55,6 +55,14 @@ class FeignClientDigest(BaseModel):
     url_property_key: str = ""
 
 
+class KafkaTopicConfig(BaseModel):
+    topic_name: str
+    role: str                   # "producer" | "consumer"
+    property_key: str = ""      # e.g. "spring.kafka.consumer.topic"
+    group_id: str = ""          # spring.kafka.consumer.group-id
+    publisher_endpoint: str = ""  # REST path if produced via a publisher endpoint, e.g. "POST /events/order"
+
+
 class EventDigest(BaseModel):
     produces: list[str] = Field(default_factory=list)
     consumes: list[str] = Field(default_factory=list)
@@ -93,6 +101,7 @@ class ServiceDigest(BaseModel):
     dto_schemas: list[DtoDigest] = Field(default_factory=list)
     feign_clients: list[FeignClientDigest] = Field(default_factory=list)
     events: EventDigest = Field(default_factory=EventDigest)
+    kafka_topics: list[KafkaTopicConfig] = Field(default_factory=list)
     security_config: dict = Field(default_factory=dict)
     beans: list[BeanDigest] = Field(default_factory=list)
     exception_handlers: list[ExceptionHandlerDigest] = Field(default_factory=list)
@@ -157,3 +166,4 @@ class MasterDigest(BaseModel):
     service_dependencies: dict[str, list[str]] = Field(default_factory=dict)
     auth_flow: dict = Field(default_factory=dict)
     shared_models: list[str] = Field(default_factory=list)
+    kafka_event_flow: dict = Field(default_factory=dict)

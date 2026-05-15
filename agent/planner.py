@@ -46,7 +46,8 @@ Available tools (name: description — input format):
   read_source_file      : read raw source file — absolute file path
   graph_summary         : knowledge graph overview statistics — (empty string)
   get_external_calls    : list Feign downstream calls with resolved URLs for a service — service name or "" for all
-  get_dto_schema        : field structure of a request/response DTO class — DTO class name (e.g. "OrderRequest")\
+  get_dto_schema        : field structure of a request/response DTO class — DTO class name (e.g. "OrderRequest")
+  trace_event_flow      : full Kafka event flow — REST publisher → topic → consumers — topic name or service name\
 """
 
 PLANNER_SYSTEM = """\
@@ -70,6 +71,7 @@ Planning guidelines:
 - "how does X work" questions      → trace_request + search_deep + get_method_calls (on the main service)
 - "who calls X" questions          → find_callers + search_deep
 - "what breaks if I change X"      → impact_graph + search_deep
+- "how does event X flow" / "who consumes X events" / "what events does X produce" → trace_event_flow + search_deep
 - "what does [service] call" / "downstream dependencies of X" → get_external_calls + search_deep
 - "what fields does X have" / "what does the request/response look like" → get_dto_schema + search_deep
 - generate/implement questions     → search_codebase (patterns) + get_entity_schema (entity) + get_method_calls (similar class)

@@ -340,6 +340,15 @@ def describe_feature(feature_name: str) -> str:
     return _get_graph().describe_feature(feature_name)
 
 
+def trace_event_flow(topic_or_service: str) -> str:
+    """
+    Trace the complete Kafka event flow for a topic or service.
+    Input: topic name (e.g. 'order.events') or service name (e.g. 'ms-java-order').
+    Returns: REST publisher endpoint(s) → Kafka topic → all consumer services and handler beans.
+    """
+    return _get_graph().trace_event_flow(topic_or_service)
+
+
 def get_dto_schema(dto_name: str) -> str:
     """
     Return the field structure of a request/response DTO class.
@@ -445,6 +454,7 @@ def build_tools_map() -> dict:
         "describe_feature": describe_feature,
         "get_external_calls": get_external_calls,
         "get_dto_schema": get_dto_schema,
+        "trace_event_flow": trace_event_flow,
     }
 
 
@@ -524,5 +534,12 @@ def build_tools() -> list[Tool]:
                  "Return the complete field structure of a request or response DTO class. "
                  "Input: DTO class name (e.g. 'OrderRequest', 'AppointmentSlotResponse'). "
                  "Use when asked 'what fields does X have?' or 'what does the API request/response look like?'"
+             )),
+        Tool(name="trace_event_flow", func=trace_event_flow,
+             description=(
+                 "Trace the complete Kafka event flow for a topic or service. "
+                 "Input: topic name (e.g. 'order.events') or service name. "
+                 "Returns: REST publisher endpoint → Kafka topic → consumer services and handlers. "
+                 "Use for 'how does event X flow?', 'who consumes order events?', 'what events does X produce?'"
              )),
     ]

@@ -48,6 +48,8 @@ A fully local, offline AI agent for Angular + Spring Boot microservice projects.
 - Exception handlers (`@ControllerAdvice`)
 - Scheduled tasks (`@Scheduled` cron/fixedRate)
 - Kafka/RabbitMQ events — all patterns: literal topics, `@Value("${kafka.topic}")` field references, `${prop}` placeholders in `@KafkaListener`, array format topics, static constants, Spring Cloud Stream `streamBridge.send()`
+- Central Kafka event publisher pattern: one service exposes REST endpoints that call `kafkaTemplate.send()` — detected automatically and surfaced as `publishes_to` edges in the graph
+- Consumer topic resolution from `spring.kafka.consumer.topic` / `spring.kafka.producer.topic` properties (no hard-coded strings required)
 - Security configuration (JWT filters, permit-all paths, OAuth2)
 - Build dependencies (`pom.xml` / `build.gradle`)
 - DB migrations (Flyway `.sql` / Liquibase `changelog.xml`)
@@ -182,7 +184,7 @@ sequenceDiagram
 | `master_digest_builder.py` | Cross-service map: Angular→backend API contracts, inter-service dependency graph (Feign + Kafka), JWT auth flow, shared DTOs. |
 | `api_catalog_builder.py` | Generates `api-catalog/openapi.json` (OpenAPI 3.0.3 spec) and `api-catalog/api-catalog.md` (Markdown table) from all digest files. Runs automatically after every reindex. |
 | `digest_runner.py` | Orchestrates full/single/incremental digest runs. Triggers graph rebuild and API catalog generation after every run. |
-| `models.py` | Pydantic v2 schemas: `ServiceDigest`, `AngularDigest`, `BeanDigest`, `NgRxFeature`, `ScheduledTaskDigest`, `DtoDigest`, `DtoFieldDigest`, `FeignCallDetail`, etc. |
+| `models.py` | Pydantic v2 schemas: `ServiceDigest`, `AngularDigest`, `BeanDigest`, `NgRxFeature`, `ScheduledTaskDigest`, `DtoDigest`, `DtoFieldDigest`, `FeignCallDetail`, `KafkaTopicConfig`, etc. |
 
 ### `graph/` — Knowledge Graph
 
@@ -194,7 +196,7 @@ sequenceDiagram
 
 **Node types:** `endpoint`, `spring_service`, `spring_repository`, `spring_component`, `spring_configuration`, `entity`, `angular_component`, `angular_service`, `kafka_topic`, `user_function`
 
-**Edge types:** `uses_service`, `http_call`, `inferred_http_call`, `handled_by`, `depends_on`, `manages`, `jpa_relation`, `feign_calls`, `produces_event`, `consumes_event`, `part_of_feature`, `feature_uses`, `feature_calls`
+**Edge types:** `uses_service`, `http_call`, `inferred_http_call`, `handled_by`, `depends_on`, `manages`, `jpa_relation`, `feign_calls`, `produces_event`, `consumes_event`, `publishes_to`, `part_of_feature`, `feature_uses`, `feature_calls`
 
 ### `embeddings/` — Vector Index
 
@@ -236,6 +238,7 @@ sequenceDiagram
 | `get_entity_schema` | entity class name | JPA entity fields and relationships |
 | `get_api_contracts` | `""` | Angular→backend API contract map |
 | `get_service_dependencies` | `""` | Inter-service dependency tree |
+| `trace_event_flow` | kafka topic name | "How does the order.created event flow? Who produces and consumes it?" |
 | `get_auth_flow` | `""` | JWT auth flow summary |
 | `read_source_file` | absolute file path | Read raw source file |
 | `graph_summary` | `""` | Knowledge graph statistics |
@@ -261,7 +264,16 @@ Created by: `python -m digest.digest_runner` or `POST /reindex`
 | File | Contents |
 |---|---|
 | `digests/<project>.digest.json` | Per-project structured map: endpoints (with resolved paths), beans (with method call graphs), entities (fields including Lombok-style), DTO schemas (field types, validations, `@JsonProperty`), Feign clients (with resolved URLs + per-method request/response types), events (all Kafka patterns), exception handlers, scheduled tasks, migrations |
-| `digests/master.digest.json` | Cross-service map: Angular→backend API contracts, inter-service dependency graph, JWT auth flow, shared DTOs |
+| `digests/master.digest.json` | Cross-service map: Angular→backend API contracts, inter-service dependency graph, JWT auth flow, shared DTOs, `kafka_event_flow` (topic→producers+consumers across all services) |
+
+**`KafkaTopicConfig` (new, per service):**
+Each service's digest now includes a `kafka_topics` list. Each entry records:
+- `topic_name` — resolved topic string (from literal, `@Value`, or property file)
+- `role` — `producer` or `consumer`
+- `class_name` / `method_name` — where in the code the topic is used
+- `publisher_endpoint` — for the central publisher pattern: the REST endpoint path that triggers the `kafkaTemplate.send()` call
+
+`MasterDigest.kafka_event_flow` is a cross-service map `{topic → {producers: [...], consumers: [...]}}` aggregated from all service digests.
 
 **Key additions in `FeignClientDigest`:**
 - `resolved_url` — actual URL resolved from `application.properties` (e.g. `http://ms-java-appointments:8080`)
@@ -295,6 +307,10 @@ endpoint::ms-java-order::POST::/api/orders
 bean::ms-java-order::OrderServiceImpl
   --[feign_calls]--> endpoint::ms-java-product::GET::/api/products/{id}
   --[produces_event]--> kafka_topic::order.created
+
+endpoint::ms-java-events::POST::/api/events/order-created
+  --[publishes_to]--> kafka_topic::order.created
+    --[consumes_event]--> bean::ms-java-order::OrderEventConsumer
 ```
 
 **User Function nodes** (`user_function` type) represent user-facing features detected from Angular component paths. Each captures the complete stack: entry components → Angular services → backend microservices.
@@ -890,6 +906,18 @@ Add a Kafka event publisher that fires an order.cancelled event when an order is
 Add pagination support to the customer list endpoint. Follow the Spring Data Pageable pattern used elsewhere in this codebase.
 
 Create a new Angular service to call the support-request API. Follow the existing service and HTTP call patterns. Include the TypeScript model.
+```
+
+### Kafka Event Flows (use `deep` mode)
+
+```
+Trace the order.created event. Which REST endpoint publishes it and which services consume it?
+
+What Kafka topics does this platform produce and consume? Show the full event flow across all services.
+
+Which service owns the central Kafka publisher? What topics does it expose via REST?
+
+What downstream effects happen when a site.updated event is published?
 ```
 
 ### Debugging and Investigation

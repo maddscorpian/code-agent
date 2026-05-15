@@ -28,6 +28,7 @@ class GraphBuilder:
         feign_calls    bean               → endpoint      (cross-service Feign)
         produces_event bean               → kafka_topic
         consumes_event kafka_topic        → bean
+        publishes_to   endpoint           → kafka_topic    (REST endpoint publishes directly)
     """
 
     def __init__(self, digests_dir: str):
@@ -262,6 +263,21 @@ class GraphBuilder:
             if bean_node:
                 edges.append(self._edge(topic_nid, bean_node["id"], "consumes_event",
                                         f"{bean_node['name']} consumes {topic}"))
+
+        # Publisher REST endpoint → kafka_topic (endpoint publishes directly to Kafka)
+        for kt in svc.get("kafka_topics", []):
+            if kt.get("role") in ("producer", "both") and kt.get("publisher_endpoint"):
+                topic_nid = f"kafka_topic::{kt['topic_name']}"
+                # Find the matching endpoint node
+                ep_str = kt["publisher_endpoint"]  # e.g. "POST /events/order"
+                parts = ep_str.split(" ", 1)
+                if len(parts) == 2:
+                    ep_nid = self._find_endpoint_fuzzy(nodes, parts[0], parts[1], project)
+                    if ep_nid and topic_nid in nodes:
+                        edges.append(self._edge(
+                            ep_nid, topic_nid, "publishes_to",
+                            f"{ep_str} publishes to {kt['topic_name']}",
+                        ))
 
         # Feign client → target endpoint
         for fc in svc.get("feign_clients", []):
