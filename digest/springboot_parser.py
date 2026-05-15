@@ -129,12 +129,12 @@ class SpringBootParser:
             if "SecurityFilterChain" in text or "WebSecurityConfigurerAdapter" in text:
                 security_config.update(self._parse_security(text))
 
-        # Entities may be missed if AST succeeded but didn't flag has_entity — run
-        # a regex pass over all files to catch any remaining @Entity classes.
+        # Safety net: if AST succeeded but didn't flag has_entity, scan all files.
+        # Also catches fully-qualified @jakarta.persistence.Entity usage.
         if not entities:
             for file in java_files:
                 text = self._safe_read(file)
-                if text and "@Entity" in text:
+                if text and ("@Entity" in text or "persistence.Entity" in text):
                     entities.extend(self._parse_entities(text))
 
         security_config.update(self._parse_application_config())
@@ -362,25 +362,29 @@ class SpringBootParser:
     def _parse_controllers(self, text: str) -> list[EndpointDigest]:
         if "@RestController" not in text and "@Controller" not in text:
             return []
-        raw_base = self._annotation_value(text, r"@RequestMapping\((.*?)\)") or ""
+        # class_base from the class-level @RequestMapping (full text needed)
+        raw_base = self._annotation_value(text, r"@RequestMapping\(([\s\S]*?)\)") or ""
         class_base = self._extract_path_from_mapping_args(raw_base) if raw_base else ""
         controller_name = self._class_name(text) or "UnknownController"
         rows: list[EndpointDigest] = []
 
-        # Locate where the class body opens so we skip the class-level @RequestMapping
+        # Scan only the class BODY so the class-level @RequestMapping is never in scope.
+        # This prevents it from consuming method-level annotations via [\s\S]*? matching.
         cls_decl = re.search(r'\bclass\s+\w+', text)
-        class_body_start = text.find("{", cls_decl.start() if cls_decl else 0) + 1
+        body_start = text.find("{", cls_decl.start() if cls_decl else 0) + 1
+        class_body = text[body_start:]
 
         method_pattern = re.compile(
-            r"(@(?:GetMapping|PostMapping|PutMapping|DeleteMapping|PatchMapping|RequestMapping)\((.*?)\))"
+            # [\s\S]*? inside annotation parens captures multi-line annotation args
+            r"(@(?:GetMapping|PostMapping|PutMapping|DeleteMapping|PatchMapping|RequestMapping)\(([\s\S]*?)\))"
             r"(?:\s*@(?!(?:Get|Post|Put|Delete|Patch)Mapping|Rest|Controller|RequestMapping\b)[^\n]*)*\s*"
             r"(public\s+([A-Za-z0-9_<>, ?]+)\s+([A-Za-z0-9_]+)\s*\((.*?)\))",
             re.MULTILINE,
         )
-        for m in method_pattern.finditer(text):
+        for m in method_pattern.finditer(class_body):
             ann_block, ann_args, _, response_type, handler, params = m.groups()
-            # Include 200 chars before the match to catch @PreAuthorize placed above the mapping
-            context = text[max(0, m.start() - 200): m.end()]
+            # Include 200 chars before the match in class_body to catch @PreAuthorize above the mapping
+            context = class_body[max(0, m.start() - 200): m.end()]
             ann_name = re.search(r"@([A-Za-z]+)\(", ann_block)
             ann = ann_name.group(1) if ann_name else "RequestMapping"
             http_method = HTTP_ANN_TO_METHOD.get(ann, "GET")
@@ -410,23 +414,50 @@ class SpringBootParser:
         return rows
 
     def _parse_entities(self, text: str) -> list[EntityDigest]:
-        if "@Entity" not in text:
+        # Match both @Entity and fully-qualified @javax/jakarta.persistence.Entity
+        if "@Entity" not in text and "persistence.Entity" not in text:
             return []
         name = self._class_name(text) or "UnknownEntity"
-        table = self._annotation_value(text, r"@Table\((.*?)\)") or name
-        fields = re.findall(
-            r"@Column(?:\([^)]*\))?\s+private\s+[A-Za-z0-9_<>, ?]+\s+([A-Za-z0-9_]+)\s*;", text
+        table = self._annotation_value(text, r"@Table\(([\s\S]*?)\)") or name
+
+        # Fields explicitly annotated with @Column
+        col_fields = re.findall(
+            r"@Column(?:\([^)]*\))?\s+(?:@\w+\s+)*private\s+[\w<>?,\[\] ]+\s+(\w+)\s*[;=]", text
         )
-        # Also catch fields without @Column
-        id_fields = re.findall(r"@Id\s+(?:@[^\n]+\n\s*)?private\s+[A-Za-z0-9_<>]+\s+(\w+)\s*;", text)
-        all_fields = list(dict.fromkeys(id_fields + fields))
+        # @Id fields (primary key — always include)
+        id_fields = re.findall(
+            r"@Id\b[\s\S]{0,120}?private\s+[\w<>?,\[\] ]+\s+(\w+)\s*[;=]", text
+        )
+        all_fields = list(dict.fromkeys(id_fields + col_fields))
+
+        # Fallback: if no @Column-annotated fields found (Lombok / bare private fields),
+        # scan all private fields in the class body so we still get a useful field list.
+        if not col_fields:
+            body_start = text.find("{", text.find(f"class {name}") if name != "UnknownEntity" else 0)
+            if body_start > 0:
+                body = text[body_start: body_start + 4000]
+                _SKIP = {"log", "logger", "LOGGER", "serialVersionUID", "INSTANCE"}
+                extra = re.findall(
+                    r"private\s+(?:final\s+)?(?!static\b)[\w<>?,\[\] ]+\s+(\w+)\s*[;=]", body
+                )
+                all_fields = list(dict.fromkeys(f for f in extra if f not in _SKIP))
+
         relationships: list[str] = []
-        for ann, label in {"OneToMany": "OneToMany", "ManyToOne": "ManyToOne", "ManyToMany": "ManyToMany", "OneToOne": "OneToOne"}.items():
+        for ann, label in {
+            "OneToMany": "OneToMany", "ManyToOne": "ManyToOne",
+            "ManyToMany": "ManyToMany", "OneToOne": "OneToOne",
+        }.items():
             for target in re.findall(
                 rf"@{ann}[\s\S]*?private\s+[A-Za-z0-9_<>, ?]+\s+([A-Za-z0-9_]+)\s*;", text
             ):
                 relationships.append(f"{label} -> {target}")
-        return [EntityDigest(name=name, table=self._extract_name_arg(table), fields=all_fields, relationships=relationships)]
+
+        return [EntityDigest(
+            name=name,
+            table=self._extract_name_arg(table),
+            fields=all_fields,
+            relationships=relationships,
+        )]
 
     def _parse_dtos(self, text: str) -> list[str]:
         classes = re.findall(r"class\s+([A-Za-z0-9_]+)", text)
