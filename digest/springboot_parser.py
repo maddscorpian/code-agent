@@ -699,12 +699,123 @@ class SpringBootParser:
         return props
 
     def _parse_events(self, text: str) -> tuple[set[str], set[str]]:
-        consumes = set(re.findall(r'@KafkaListener\([^)]*topics\s*=\s*"?([A-Za-z0-9._-]+)"?', text))
-        consumes.update(re.findall(r'@RabbitListener\([^)]*queues\s*=\s*"?([A-Za-z0-9._-]+)"?', text))
-        produces = set(re.findall(r'kafkaTemplate\.[^(]*\(\s*"([A-Za-z0-9._-]+)"', text))
-        produces.update(re.findall(r'rabbitTemplate\.[^(]*\(\s*"([A-Za-z0-9._-]+)"', text))
-        # Also handle KafkaTemplate.send("topic", ...)
-        produces.update(re.findall(r'\.send\(\s*"([A-Za-z0-9._-]+)"', text))
+        """
+        Extract Kafka/RabbitMQ produce and consume topics from a Java source file.
+
+        Handles all common patterns:
+        - Literal string topics: @KafkaListener(topics = "order.events")
+        - Property placeholder topics: @KafkaListener(topics = "${kafka.topic.orders}")
+        - Array topics: @KafkaListener(topics = {"t1", "t2"})
+        - @Value-injected field topics: kafkaTemplate.send(ordersTopic, msg)
+        - Constant-referenced topics: kafkaTemplate.send(ORDER_TOPIC, msg)
+        - topicPattern: @KafkaListener(topicPattern = "orders\\..*")
+        - Spring Cloud Stream: streamBridge.send("channel-name", msg)
+        - RabbitMQ: @RabbitListener, rabbitTemplate
+        """
+        # ── Step 1: build a local map of field-name → resolved topic value ──────
+        # Covers both @Value("${...}") and static final String constants
+        topic_fields: dict[str, str] = {}
+
+        # @Value("${kafka.topic.orders}") private String ordersTopic;
+        for m in re.finditer(
+            r'@Value\s*\(\s*"?\$\{([^}]+)\}"?\s*\)\s+(?:private\s+|protected\s+)?(?:final\s+)?'
+            r'String\s+(\w+)',
+            text,
+        ):
+            prop_key, field = m.group(1), m.group(2)
+            resolved = self._properties.get(prop_key, "")
+            if resolved:
+                topic_fields[field] = resolved
+
+        # static final String ORDER_TOPIC = "order.events";  (from self._constants or inline)
+        for m in re.finditer(
+            r'(?:private\s+|public\s+|protected\s+)?static\s+final\s+String\s+(\w+)\s*=\s*"([^"]+)"',
+            text,
+        ):
+            const_name, value = m.group(1), m.group(2)
+            topic_fields[const_name] = value
+
+        # Also check the pre-built constant map for ClassName.FIELD references
+        for ref, value in self._constants.items():
+            short = ref.split(".")[-1]   # "OrderConstants.TOPIC" → "TOPIC"
+            topic_fields.setdefault(short, value)
+            topic_fields.setdefault(ref, value)
+
+        def _resolve(raw: str) -> str:
+            """Resolve a topic reference: literal, ${prop}, or field/constant name."""
+            raw = raw.strip().strip('"\'')
+            if raw.startswith("${") and raw.endswith("}"):
+                key = raw[2:-1]
+                return self._properties.get(key, raw)
+            return topic_fields.get(raw, raw)
+
+        # ── Step 2: Kafka consumers ───────────────────────────────────────────────
+        consumes: set[str] = set()
+
+        # @KafkaListener(topics = "literal") or topics = "${prop}"
+        for m in re.finditer(
+            r'@KafkaListener\s*\([\s\S]*?topics\s*=\s*("?\$?\{?[^,)\s"\']+\}?"?)',
+            text,
+        ):
+            t = _resolve(m.group(1))
+            if t and not t.startswith("@"):
+                consumes.add(t)
+
+        # @KafkaListener(topics = {"t1", "${t2}"}) — array format
+        for m in re.finditer(r'@KafkaListener\s*\([\s\S]*?topics\s*=\s*\{([^}]+)\}', text):
+            for entry in re.findall(r'"([^"]+)"', m.group(1)):
+                consumes.add(_resolve(entry))
+
+        # @KafkaListener(topicPattern = "orders\\..*")
+        for m in re.finditer(r'@KafkaListener\s*\([\s\S]*?topicPattern\s*=\s*"([^"]+)"', text):
+            consumes.add(f"pattern:{m.group(1)}")
+
+        # RabbitMQ
+        for m in re.finditer(
+            r'@RabbitListener\s*\([\s\S]*?queues\s*=\s*(?:\{([^}]+)\}|"([^"]+)")',
+            text,
+        ):
+            for entry in re.findall(r'"([^"]+)"', m.group(0)):
+                consumes.add(_resolve(entry))
+
+        # ── Step 3: Kafka producers ───────────────────────────────────────────────
+        produces: set[str] = set()
+
+        # kafkaTemplate.send("literal", ...) or kafkaTemplate.send(fieldName, ...)
+        for m in re.finditer(
+            r'(?:kafkaTemplate|kafkaSender)\s*\.\s*\w+\s*\(\s*("?[\w.${}"-]+"?)\s*,',
+            text,
+        ):
+            t = _resolve(m.group(1))
+            if t and not t.startswith("@"):
+                produces.add(t)
+
+        # rabbitTemplate.convertAndSend("exchange", "routingKey", ...)
+        for m in re.finditer(
+            r'rabbitTemplate\s*\.\s*\w+\s*\(\s*"([^"]+)"',
+            text,
+        ):
+            produces.add(m.group(1))
+
+        # streamBridge.send("channel-name", msg) — Spring Cloud Stream
+        for m in re.finditer(r'streamBridge\s*\.\s*send\s*\(\s*"([^"]+)"', text):
+            produces.add(m.group(1))
+
+        # Generic .send("literal", ...) on any template-like object
+        for m in re.finditer(r'\.send\s*\(\s*"([A-Za-z0-9._-]+)"', text):
+            produces.add(m.group(1))
+
+        # .send(fieldName, ...) — resolve field/constant names
+        for m in re.finditer(r'\.send\s*\(\s*([A-Za-z_]\w*)\s*,', text):
+            t = topic_fields.get(m.group(1), "")
+            if t:
+                produces.add(t)
+
+        # Clean up: remove obviously wrong values (Java keywords, empty, too short)
+        _bad = {"null", "true", "false", "this", "new", "super", "return"}
+        consumes = {t for t in consumes if t and len(t) > 1 and t not in _bad}
+        produces = {t for t in produces if t and len(t) > 1 and t not in _bad}
+
         return consumes, produces
 
     def _parse_security(self, text: str) -> dict:

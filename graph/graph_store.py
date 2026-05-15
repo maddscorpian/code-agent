@@ -378,26 +378,63 @@ class GraphStore:
                                 + (f": {', '.join(dep_methods)}" if dep_methods else "")
                             )
 
-        # Kafka events
-        events_out = [
-            self._nodes[e["to"]]
-            for e in self._out.get(nid, [])
-            if e["type"] == "produces_event" and e["to"] in self._nodes
-        ]
-        events_in = [
-            self._nodes[e["from"]]
-            for e in self._in.get(nid, [])
-            if e["type"] == "consumes_event" and e["from"] in self._nodes
-        ]
+        # Kafka / RabbitMQ events — traverse feature_calls beans and their project peers
+        # The user_function node itself has no event edges; they are on the Spring service beans.
+        producing_beans: list[tuple[str, str]] = []   # (bean_name, topic_name)
+        consuming_beans: list[tuple[str, str]] = []
+
+        visited_event_beans: set[str] = set()
+
+        def _collect_events_from_bean(bean_id: str) -> None:
+            if bean_id in visited_event_beans:
+                return
+            visited_event_beans.add(bean_id)
+            bean = self._nodes.get(bean_id, {})
+            bname = bean.get("name", "?")
+            for edge in self._out.get(bean_id, []):
+                if edge["type"] == "produces_event":
+                    topic = self._nodes.get(edge["to"], {}).get("name", edge["to"])
+                    producing_beans.append((bname, topic))
+            for edge in self._in.get(bean_id, []):
+                if edge["type"] == "consumes_event":
+                    topic = self._nodes.get(edge["from"], {}).get("name", edge["from"])
+                    consuming_beans.append((bname, topic))
+
+        # Walk all spring service beans reached by feature_calls
+        for edge in self._out.get(nid, []):
+            if edge["type"] != "feature_calls":
+                continue
+            bean_id = edge["to"]
+            _collect_events_from_bean(bean_id)
+            # Also check other beans in the same project (sibling beans may handle events)
+            proj = self._nodes.get(bean_id, {}).get("project", "")
+            if proj:
+                for sibling_id, sibling in self._nodes.items():
+                    if (sibling.get("project") == proj
+                            and sibling.get("type") == "spring_service"
+                            and sibling_id not in visited_event_beans):
+                        # Only include if it has event edges (don't flood with all beans)
+                        has_events = any(
+                            e["type"] in ("produces_event", "consumes_event")
+                            for e in self._out.get(sibling_id, []) + self._in.get(sibling_id, [])
+                        )
+                        if has_events:
+                            _collect_events_from_bean(sibling_id)
+
         lines.append("\n[Events]")
-        lines.append(
-            f"  Produces: {', '.join(n.get('name', '') for n in events_out)}"
-            if events_out else "  Produces: (none detected)"
-        )
-        lines.append(
-            f"  Consumes: {', '.join(n.get('name', '') for n in events_in)}"
-            if events_in else "  Consumes: (none detected)"
-        )
+        if producing_beans:
+            lines.append("  Produces:")
+            for bean, topic in producing_beans:
+                lines.append(f"    {bean} → {topic}")
+        else:
+            lines.append("  Produces: (none detected — topics may use @Value or constants; reindex to capture)")
+
+        if consuming_beans:
+            lines.append("  Consumes:")
+            for bean, topic in consuming_beans:
+                lines.append(f"    {bean} ← {topic}")
+        else:
+            lines.append("  Consumes: (none detected)")
 
         return "\n".join(lines)
 
