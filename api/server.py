@@ -59,6 +59,25 @@ def chat_ui():
     return {"error": "Chat UI not found", "expected_path": str(CHAT_HTML)}
 
 
+@app.get("/api-catalog")
+def get_api_catalog():
+    """Return the OpenAPI 3.0 catalog generated during last reindex."""
+    catalog_path = ROOT / "api-catalog" / "openapi.json"
+    if not catalog_path.exists():
+        return {"error": "API catalog not built yet. Run POST /reindex first."}
+    return json.loads(catalog_path.read_text(encoding="utf-8"))
+
+
+@app.get("/api-catalog/markdown")
+def get_api_catalog_markdown():
+    """Return the Markdown API summary table generated during last reindex."""
+    from fastapi.responses import PlainTextResponse
+    md_path = ROOT / "api-catalog" / "api-catalog.md"
+    if not md_path.exists():
+        return PlainTextResponse("API catalog not built yet. Run POST /reindex first.", status_code=404)
+    return PlainTextResponse(md_path.read_text(encoding="utf-8"))
+
+
 @app.post("/ask", response_model=AskResponse)
 def ask(req: AskRequest):
     start = time.perf_counter()

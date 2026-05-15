@@ -28,6 +28,8 @@ class FeignClientDigest(BaseModel):
     client_name: str
     target_service: str
     calls: list[str] = Field(default_factory=list)
+    resolved_url: str = ""          # actual URL from application.properties lookup
+    url_property_key: str = ""      # e.g. "ms-java.appointments.url"
 
 
 class EventDigest(BaseModel):

@@ -44,7 +44,8 @@ Available tools (name: description — input format):
   get_service_dependencies : inter-service dependency tree — (empty string)
   get_auth_flow         : JWT auth flow summary — (empty string)
   read_source_file      : read raw source file — absolute file path
-  graph_summary         : knowledge graph overview statistics — (empty string)\
+  graph_summary         : knowledge graph overview statistics — (empty string)
+  get_external_calls    : list Feign downstream calls with resolved URLs for a service — service name or "" for all\
 """
 
 PLANNER_SYSTEM = """\
@@ -68,6 +69,7 @@ Planning guidelines:
 - "how does X work" questions      → trace_request + search_deep + get_method_calls (on the main service)
 - "who calls X" questions          → find_callers + search_deep
 - "what breaks if I change X"      → impact_graph + search_deep
+- "what does [service] call" / "downstream dependencies of X" → get_external_calls + search_deep
 - generate/implement questions     → search_codebase (patterns) + get_entity_schema (entity) + get_method_calls (similar class)
 - chat/explain questions           → search_codebase + trace_request (if a path is mentioned)
 - Use 3–6 tool calls; never call the same tool twice with the same input.

@@ -340,6 +340,38 @@ def describe_feature(feature_name: str) -> str:
     return _get_graph().describe_feature(feature_name)
 
 
+def get_external_calls(service_filter: str = "") -> str:
+    """
+    Return all Feign client downstream calls for a service (or all services).
+    Shows resolved URLs, property keys, and the mapped endpoint calls.
+    Input: service name (e.g. 'ms-java-order') or empty string for all.
+    """
+    results: list[str] = []
+    for f in DIGESTS.glob("*.digest.json"):
+        if f.name == "master.digest.json":
+            continue
+        try:
+            data = json.loads(f.read_text(encoding="utf-8"))
+        except Exception:
+            continue
+        project = data.get("project", "")
+        if service_filter and service_filter.lower() not in project.lower():
+            continue
+        feigns = data.get("feign_clients", [])
+        if not feigns:
+            continue
+        lines = [f"[{project}] Feign clients:"]
+        for fc in feigns:
+            url = fc.get("resolved_url", "") or "(unresolved)"
+            prop = fc.get("url_property_key", "")
+            prop_str = f" from ${{{prop}}}" if prop else ""
+            lines.append(f"  {fc['client_name']} → {fc.get('target_service','')}  url={url}{prop_str}")
+            for call in fc.get("calls", [])[:8]:
+                lines.append(f"    {call}")
+        results.append("\n".join(lines))
+    return "\n\n".join(results) if results else f"No Feign clients found for '{service_filter}'"
+
+
 # ------------------------------------------------------------------
 # Tool registry
 # ------------------------------------------------------------------
@@ -363,6 +395,7 @@ def build_tools_map() -> dict:
         "graph_summary": graph_summary,
         "list_features": list_features,
         "describe_feature": describe_feature,
+        "get_external_calls": get_external_calls,
     }
 
 
@@ -430,5 +463,11 @@ def build_tools() -> list[Tool]:
                  "Input: feature name (e.g. 'Book Appointment', 'cancel order'). Fuzzy-matched. "
                  "Returns: Angular components → Angular services → Spring beans → repositories. "
                  "Use for 'how does [feature] work?' questions."
+             )),
+        Tool(name="get_external_calls", func=get_external_calls,
+             description=(
+                 "List all Feign client downstream calls for a service with resolved URLs. "
+                 "Input: service name (e.g. 'ms-java-order') or empty string for all. "
+                 "Use when asked 'what does X call?' or 'what downstream services does X depend on?'"
              )),
     ]

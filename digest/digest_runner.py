@@ -116,6 +116,17 @@ class DigestRunner:
             )
         except Exception as exc:
             logger.warning("Graph build failed (non-fatal): %s", exc)
+        self._build_api_catalog()
+
+    def _build_api_catalog(self) -> None:
+        try:
+            from digest.api_catalog_builder import ApiCatalogBuilder
+            catalog_dir = Path(__file__).resolve().parents[1] / "api-catalog"
+            catalog = ApiCatalogBuilder(str(self.output_dir), str(catalog_dir)).build()
+            total = catalog.get("info", {}).get("x-total-endpoints", "?")
+            logger.info("API catalog built: %s endpoints → %s", total, catalog_dir)
+        except Exception as exc:
+            logger.warning("API catalog build failed (non-fatal): %s", exc)
 
     @staticmethod
     def _write_json(path: Path, payload: dict):

@@ -42,9 +42,11 @@ class SpringBootParser:
         self.project_path = Path(project_path)
         self._pom = PomParser()
         self._constants: dict[str, str] = {}
+        self._properties: dict[str, str] = {}
 
     def parse(self) -> ServiceDigest:
         self._constants = self._build_constant_map()
+        self._properties = self._build_properties_map()
         project = self.project_path.name
         java_files = list(self.project_path.rglob("*.java"))
 
@@ -427,9 +429,36 @@ class SpringBootParser:
     def _parse_feign(self, text: str) -> list[FeignClientDigest]:
         if "@FeignClient" not in text:
             return []
-        raw = self._annotation_value(text, r"@FeignClient\((.*?)\)") or ""
+        # Use [\s\S]*? to capture multi-line @FeignClient annotations
+        m = re.search(r"@FeignClient\(([\s\S]*?)\)", text)
+        raw = m.group(1) if m else ""
         client_name = self._extract_named_arg(raw, "name") or self._extract_named_arg(raw, "value") or "unknown"
         target = self._extract_named_arg(raw, "contextId") or client_name
+
+        # Resolve URL from property placeholder: url = "${ms-java.appointments.url}"
+        url_raw = self._extract_named_arg(raw, "url") or ""
+        url_prop_key = ""
+        resolved_url = ""
+        if url_raw:
+            prop_m = re.match(r"^\$\{([^}]+)\}$", url_raw.strip())
+            if prop_m:
+                url_prop_key = prop_m.group(1)                          # "ms-java.appointments.url"
+                resolved_url = self._properties.get(url_prop_key, "")
+            else:
+                resolved_url = url_raw                                  # already a literal URL
+
+        # Infer target service from resolved URL hostname or property key
+        if resolved_url:
+            host_m = re.search(r"https?://([^/:]+)", resolved_url)
+            if host_m:
+                target = host_m.group(1)                                # "ms-java-appointments"
+        elif url_prop_key:
+            # "ms-java.appointments.url" → strip last segment → join remaining with "-"
+            parts = url_prop_key.rstrip(".").split(".")
+            if len(parts) >= 2 and parts[-1] in ("url", "host", "base", "uri", "endpoint"):
+                parts = parts[:-1]
+            target = "-".join(parts)                                    # "ms-java-appointments"
+
         calls: list[str] = []
         for ann, args in re.findall(r"@((?:Get|Post|Put|Delete|Patch)Mapping|RequestMapping)\((.*?)\)", text):
             path = self._extract_path_from_mapping_args(args)
@@ -439,7 +468,37 @@ class SpringBootParser:
                 if explicit:
                     method = explicit.group(1)
             calls.append(f"{method} {path}")
-        return [FeignClientDigest(client_name=client_name, target_service=target, calls=calls)]
+
+        return [FeignClientDigest(
+            client_name=client_name,
+            target_service=target,
+            calls=calls,
+            resolved_url=resolved_url,
+            url_property_key=url_prop_key,
+        )]
+
+    def _build_properties_map(self) -> dict[str, str]:
+        """Scan application.properties / application.yml files to resolve property placeholders."""
+        props: dict[str, str] = {}
+        for file in self._iter_config_files():
+            text = self._safe_read(file)
+            if not text:
+                continue
+            if file.suffix in (".yml", ".yaml"):
+                # Flat key: value lines (non-nested)
+                for pm in re.finditer(r"^([\w.\-]+)\s*:\s*([^\n#]+)", text, re.MULTILINE):
+                    key = pm.group(1).strip()
+                    val = pm.group(2).strip().strip("'\"")
+                    if val and not val.startswith("{"):
+                        props[key] = val
+            else:
+                # .properties: key=value or key: value
+                for pm in re.finditer(r"^([\w.\-]+)\s*[=:]\s*([^\n#]+)", text, re.MULTILINE):
+                    key = pm.group(1).strip()
+                    val = pm.group(2).strip()
+                    if val:
+                        props[key] = val
+        return props
 
     def _parse_events(self, text: str) -> tuple[set[str], set[str]]:
         consumes = set(re.findall(r'@KafkaListener\([^)]*topics\s*=\s*"?([A-Za-z0-9._-]+)"?', text))
