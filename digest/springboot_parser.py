@@ -747,19 +747,44 @@ class SpringBootParser:
             topic_fields.setdefault(ref, value)
 
         def _resolve(raw: str) -> str:
-            """Resolve a topic reference: literal, ${prop}, or field/constant name."""
+            """Resolve a topic reference: literal, ${prop}, SpEL #{'${prop}'}, or field/constant."""
             raw = raw.strip().strip('"\'')
+            # SpEL expression: #{...}
+            # Handles: #{'${prop}'}, #{'literal'}, #{T(Class).FIELD}
+            spel_m = re.match(r"#\{(.+)\}$", raw)
+            if spel_m:
+                inner = spel_m.group(1).strip()
+                # Strip SpEL string literal quotes: #{'...'} → inner content
+                if inner.startswith("'") and inner.endswith("'"):
+                    inner = inner[1:-1]
+                # Inner may now be ${prop} or a literal topic
+                if inner.startswith("${") and inner.endswith("}"):
+                    return self._properties.get(inner[2:-1], inner)
+                # #{T(ClassName).FIELD} — look up the field name
+                t_match = re.match(r"T\([^)]+\)\.(\w+)", inner)
+                if t_match:
+                    return topic_fields.get(t_match.group(1), inner)
+                return inner  # plain SpEL literal
+            # Simple property placeholder: ${prop.key}
             if raw.startswith("${") and raw.endswith("}"):
-                key = raw[2:-1]
-                return self._properties.get(key, raw)
+                return self._properties.get(raw[2:-1], raw)
             return topic_fields.get(raw, raw)
 
         # ── Step 2: Kafka consumers ───────────────────────────────────────────────
         consumes: set[str] = set()
 
-        # @KafkaListener(topics = "literal") or topics = "${prop}"
+        # @KafkaListener(topics = "...") — capture full quoted string so SpEL isn't truncated
         for m in re.finditer(
-            r'@KafkaListener\s*\([\s\S]*?topics\s*=\s*("?\$?\{?[^,)\s"\']+\}?"?)',
+            r'@KafkaListener\s*\([\s\S]*?topics\s*=\s*"([^"]+)"',
+            text,
+        ):
+            t = _resolve(m.group(1))
+            if t and not t.startswith("@") and not t.startswith("#"):
+                consumes.add(t)
+
+        # @KafkaListener(topics = ${prop}) — bare placeholder without surrounding quotes
+        for m in re.finditer(
+            r'@KafkaListener\s*\([\s\S]*?topics\s*=\s*(\$\{[^}]+\})',
             text,
         ):
             t = _resolve(m.group(1))
