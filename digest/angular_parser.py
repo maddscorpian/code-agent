@@ -97,18 +97,36 @@ class AngularParser:
         m_sel = re.search(r"selector\s*:\s*['\"]([^'\"]+)['\"]", content)
         if m_sel:
             selector = m_sel.group(1)
-        inputs = re.findall(r"@Input\(\)\s+(?:\w+\s+)?(\w+)", content)
-        outputs = re.findall(r"@Output\(\)\s+(?:\w+\s+)?(\w+)", content)
+
+        # @Input() varName  |  @Input('alias') varName  |  @Input({ ... }) varName
+        inputs = re.findall(r"@Input\s*\([^)]*\)\s+(?:\w+\s+)?(\w+)", content)
+
+        # @Output() varName  |  @Output('alias') varName
+        outputs = re.findall(r"@Output\s*\([^)]*\)\s+(?:\w+\s+)?(\w+)", content)
+
+        # Constructor injection + inject() function (Angular 14+)
         injected = self._constructor_types(content)
+        injected.extend(self._inject_function_types(content))
+
+        # @ViewChild / @ContentChild references
+        view_children = re.findall(
+            r"@(?:ViewChild|ContentChild)\s*\(\s*([A-Za-z0-9_]+)", content
+        )
+
         template_events = self._extract_template_events(file)
+        methods, method_calls = self._extract_component_methods(content)
+
         return AngularComponentDigest(
             name=cls.group(1),
             selector=selector,
             file_path=str(file.relative_to(self.project_path)),
             inputs=inputs,
             outputs=outputs,
-            injected_services=injected,
+            injected_services=list(dict.fromkeys(injected)),  # deduplicate, preserve order
             template_events=template_events,
+            methods=methods,
+            method_calls=method_calls,
+            view_children=view_children,
         )
 
     def _parse_service_file(self, file: Path) -> AngularServiceDigest | None:
@@ -259,18 +277,70 @@ class AngularParser:
 
     @staticmethod
     def _constructor_types(content: str) -> list[str]:
-        m = re.search(r"constructor\s*\(([\s\S]*?)\)", content)
+        m = re.search(r"constructor\s*\(([\s\S]*?)\)\s*\{", content)
         if not m:
             return []
         types = []
         for part in m.group(1).split(","):
             if ":" in part:
                 raw_type = part.split(":")[-1].strip().strip("?").strip()
-                # remove generics like Observable<User>
                 raw_type = re.sub(r"<[^>]+>", "", raw_type).strip()
-                if raw_type:
+                if raw_type and re.match(r"^[A-Z]", raw_type):
                     types.append(raw_type)
         return types
+
+    @staticmethod
+    def _inject_function_types(content: str) -> list[str]:
+        """Capture Angular 14+ inject() pattern: private svc = inject(ServiceType)."""
+        return re.findall(r"=\s*inject\s*\(\s*([A-Za-z0-9_]+)\s*\)", content)
+
+    @staticmethod
+    def _extract_component_methods(content: str) -> tuple[list[str], dict[str, list[str]]]:
+        """
+        Extract public/non-lifecycle methods and the this.xxx.yyy() calls inside each.
+        Skips Angular lifecycle hooks and private angular internals.
+        """
+        _LIFECYCLE = {
+            "ngOnInit", "ngOnDestroy", "ngOnChanges", "ngAfterViewInit",
+            "ngAfterContentInit", "ngAfterViewChecked", "ngAfterContentChecked",
+            "ngDoCheck", "constructor",
+        }
+        # Match method declarations: optional modifier + name + (...) + {
+        method_re = re.compile(
+            r"(?:(?:public|private|protected|async|override)\s+)*"
+            r"([a-zA-Z_$][a-zA-Z0-9_$]*)\s*\([^)]{0,200}\)\s*(?::\s*\S+\s*)?\{",
+        )
+        # Calls inside a method body: this.something.methodName(
+        call_re = re.compile(r"this\.(\w+)\.(\w+)\s*\(")
+
+        methods: list[str] = []
+        method_calls: dict[str, list[str]] = {}
+
+        for m in method_re.finditer(content):
+            name = m.group(1)
+            if name in _LIFECYCLE or name[0].isupper():
+                continue
+            methods.append(name)
+            # Grab the body: scan forward from '{' counting braces
+            start = m.end() - 1
+            depth, i, body_chars = 0, start, []
+            while i < len(content) and (depth > 0 or i == start):
+                ch = content[i]
+                if ch == "{":
+                    depth += 1
+                elif ch == "}":
+                    depth -= 1
+                    if depth == 0:
+                        break
+                else:
+                    body_chars.append(ch)
+                i += 1
+            body = "".join(body_chars)
+            calls = [f"{obj}.{fn}()" for obj, fn in call_re.findall(body)]
+            if calls:
+                method_calls[name] = calls
+
+        return methods, method_calls
 
     @staticmethod
     def _extract_env_keys(content: str) -> list[str]:

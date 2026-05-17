@@ -15,6 +15,25 @@ _PLAN_SENTINEL_END = "__END_PLAN__"
 # Cap tool output — search_deep returns up to 30 chunks so needs more room
 _MAX_TOOL_OUTPUT = 6000
 
+# Strings that indicate a tool returned nothing useful
+_EMPTY_RESULT_MARKERS = (
+    "not found",
+    "no results",
+    "no nodes",
+    "no matching",
+    "graph not built",
+    "no graph",
+    "error:",
+    "[tool error",
+    "(no context",
+)
+
+_THIN_CONTEXT_WARNING = """\
+[CONTEXT WARNING: The codebase index returned very little or no information for this question.
+Do NOT answer from general knowledge. State clearly which specific things were not found in the
+index and stop. Do not guess, infer, or describe how this type of system typically works.]
+"""
+
 
 # ------------------------------------------------------------------
 # Synthesis prompts (mode-aware)
@@ -22,8 +41,11 @@ _MAX_TOOL_OUTPUT = 6000
 
 _SYNTHESIS_SUFFIX = {
     "chat": """\
-Answer the developer's question precisely. Reference actual class names, file paths, \
-and method names from the gathered context. If context is insufficient, say so.\
+Answer the developer's question using ONLY the gathered context above.
+- Reference actual class names, file paths, and method names exactly as they appear in the context.
+- Do not use general knowledge about Angular or Spring Boot to fill in missing details.
+- If a specific class, method, endpoint, or field is not in the gathered context, say it was not found in the index — do not guess.
+- If the context is thin or off-topic, say so and suggest reindexing or rephrasing.\
 """,
 
     "deep": """\
@@ -94,6 +116,23 @@ Provide a structured impact analysis:
 }
 
 
+def _is_context_thin(tool_results: list[dict]) -> bool:
+    """Return True when all tools returned empty or error-like results."""
+    if not tool_results:
+        return True
+    useful_chars = 0
+    for tr in tool_results:
+        result_lower = tr["result"].lower().strip()
+        is_empty = (
+            not result_lower
+            or any(result_lower.startswith(m) for m in _EMPTY_RESULT_MARKERS)
+            or len(result_lower) < 80
+        )
+        if not is_empty:
+            useful_chars += len(tr["result"])
+    return useful_chars < 200
+
+
 def _synthesis_prompt(
     question: str,
     mode: str,
@@ -112,12 +151,14 @@ def _synthesis_prompt(
 
     context_section = "\n\n".join(context_blocks) if context_blocks else "(no context gathered)"
 
+    thin_warning = _THIN_CONTEXT_WARNING if _is_context_thin(tool_results) else ""
     file_section = f"\nCurrently open file:\n{file_context}\n" if file_context else ""
     history_block = format_history(history)
     mode_suffix = _SYNTHESIS_SUFFIX.get(mode, _SYNTHESIS_SUFFIX["chat"])
 
     return (
         f"{SYSTEM_PROMPT_BASE}\n\n"
+        f"{thin_warning}"
         f"Gathered context from codebase tools:\n{context_section}\n"
         f"{file_section}"
         f"{history_block}"

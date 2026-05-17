@@ -118,6 +118,9 @@ class AngularComponentDigest(BaseModel):
     outputs: list[str] = Field(default_factory=list)
     injected_services: list[str] = Field(default_factory=list)
     template_events: list[str] = Field(default_factory=list)
+    methods: list[str] = Field(default_factory=list)
+    method_calls: dict[str, list[str]] = Field(default_factory=dict)  # {method: [this.svc.call(), ...]}
+    view_children: list[str] = Field(default_factory=list)
 
 
 class AngularServiceDigest(BaseModel):

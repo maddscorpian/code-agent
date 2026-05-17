@@ -179,6 +179,17 @@ class Chunker:
                 )
                 if comp.get("template_events"):
                     content += f"\ntemplate_events={comp['template_events']}"
+                if comp.get("view_children"):
+                    content += f"\nview_children={comp['view_children']}"
+                if comp.get("methods"):
+                    content += f"\nmethods={comp['methods']}"
+                method_calls = comp.get("method_calls", {})
+                if method_calls:
+                    call_lines = [
+                        f"  {m}() → {', '.join(calls)}"
+                        for m, calls in list(method_calls.items())[:10]
+                    ]
+                    content += "\nmethod_call_graph:\n" + "\n".join(call_lines)
                 rows.append(self._chunk_dict(project, str(file), 5000 + i, content, {
                     "source": "digest", "project": project, "type": "component",
                     "name": comp.get("name", "component"),
