@@ -192,7 +192,7 @@ sequenceDiagram
 |---|---|
 | `graph_builder.py` | Builds a directed property graph from all digests. Creates Spring/Angular/endpoint nodes and edges. Calls `FeatureGraphBuilder` as a final phase. Adds `inferred_http_call` edges using service name convention when URL-matching fails. |
 | `feature_graph.py` | Detects user-facing features from Angular component paths (`src/app/components/<feature>/`). Creates `user_function` nodes with entry components, Angular services, and inferred backend projects. Adds `part_of_feature`, `feature_uses`, and `feature_calls` edges. |
-| `graph_store.py` | Loads `knowledge_graph.json` into memory. BFS traversal tools: `trace_request`, `find_callers`, `impact_graph`, `list_features`, `describe_feature`. All return human-readable strings for the LLM. |
+| `graph_store.py` | Loads `knowledge_graph.json` into memory. BFS traversal tools: `trace_request`, `find_callers`, `impact_graph`, `list_features`, `describe_feature`. `trace_request` shows `[AUTH: required, roles=[...]]` on every endpoint and includes `@Query` JPQL/SQL for repository nodes. `describe_feature` includes JPQL for repository dependencies. |
 
 **Node types:** `endpoint`, `spring_service`, `spring_repository`, `spring_component`, `spring_configuration`, `entity`, `angular_component`, `angular_service`, `kafka_topic`, `user_function`
 
@@ -212,10 +212,10 @@ sequenceDiagram
 | File | Purpose |
 |---|---|
 | `planner.py` | LLM call #1: decides which tools to invoke. Outputs `{"reasoning": "...", "tool_calls": [...]}`. Rule-based fallback routes "end to end / module X flow" → `describe_feature`; "downstream calls" → `get_external_calls`; "what fields does X have" → `get_dto_schema`. |
-| `loop.py` | Plan → Execute → Synthesize. `stream_run()` emits a `__PLAN__` sentinel so the server sends `event: plan`. Mode-specific synthesis prompts: chat / deep / generate / impact. |
-| `agent_core.py` | Public interface: `run()` and `stream_run()`. Initialises `AgentLoop` with graceful fallback to `RAGChain`. |
-| `rag_chain.py` | Fallback single-shot RAG: embed → retrieve → prompt → LLM. Multi-hop retrieval with 8 query variants and re-ranking by relevance. |
-| `tools.py` | All tool functions (plain Python callables). `build_tools_map()` returns `{name: fn}`. Full tool list below. |
+| `loop.py` | Plan → Execute → Synthesize. Structural tools (graph traversal) sorted first in synthesis context; results deduplicated across tool calls by paragraph fingerprint. `_MAX_TOOL_OUTPUT=12000`. Mode-specific synthesis prompts: chat / deep / generate / impact. |
+| `agent_core.py` | Public interface: `run()` and `stream_run()`. Initialises `AgentLoop` with `num_ctx=16384`, `temperature=0.15`, `top_p=0.95` for grounded, deterministic code analysis. Graceful fallback to `RAGChain`. |
+| `rag_chain.py` | Fallback single-shot RAG: embed → retrieve → prompt → LLM. Multi-hop retrieval with 10 query variants and re-ranking by relevance. Same LLM parameters as the agent loop. |
+| `tools.py` | All tool functions (plain Python callables). `build_tools_map()` returns `{name: fn}`. `search_deep` runs 10 targeted query variants (covers service/bean, endpoint, entity, config/Feign, Angular, method call graph, **security/auth**, **exception handling**, **Kafka/config**). `search_codebase` retrieves 16 candidates and reranks to best 8. Full tool list below. |
 | `session_store.py` | Thread-safe in-memory session store. 2-hour TTL, max 200 sessions. Last 4 exchanges injected into every prompt. |
 | `code_gen.py` | Parses `### FILE: [MODIFY\|CREATE]` blocks from LLM output. Applies unified diffs using system `patch` with a pure Python fallback. Path-validates against registered project roots. |
 
@@ -550,7 +550,7 @@ Then open `http://localhost:8765/chat` and ask:
 | Variable | Default | Description |
 |---|---|---|
 | `OLLAMA_HOST` | `http://localhost:11434` | Ollama API URL |
-| `OLLAMA_MODEL` | `deepseek-coder-v2` | LLM for Q&A and generation |
+| `OLLAMA_MODEL` | `deepseek-coder-v2` | LLM for Q&A and generation. Initialised with `num_ctx=16384`, `temperature=0.15`, `top_p=0.95` (hardcoded in `agent/agent_core.py`) |
 | `OLLAMA_EMBED_MODEL` | `nomic-embed-text` | Embedding model — do not change after first index |
 | `CHROMA_PATH` | `./vector_db` | ChromaDB directory (auto-created) |
 | `DIGESTS_PATH` | `./digests` | Digest output directory (auto-created) |

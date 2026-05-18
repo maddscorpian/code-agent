@@ -59,6 +59,14 @@ question → Planner LLM call (picks 3–6 tools)
 
 **Two-LLM-call design (`agent/loop.py`):** Planner decides tools; Synthesizer writes the answer from gathered context. The Synthesizer prompt has strict grounding rules — it must answer only from gathered context, never from training knowledge. If context is thin (all tools returned < 200 chars of useful content), `_is_context_thin()` prepends a `[CONTEXT WARNING]` block.
 
+**LLM generation parameters (`agent/agent_core.py`, `agent/rag_chain.py`):** Both `Ollama()` initialisations set `num_ctx=16384` (Ollama default ~4096 was silently truncating synthesis prompts), `temperature=0.15` (reduces hallucination / gap-filling with plausible-sounding general knowledge), `top_p=0.95` (nucleus sampling to prevent repetition at low temperature).
+
+**Context assembly (`agent/loop.py`):** `_MAX_TOOL_OUTPUT = 12000` (raised from 6000). Tool results are sorted so `_STRUCTURAL_TOOLS` (graph traversal: `trace_request`, `describe_feature`, `get_method_calls`, `impact_graph`, `find_callers`, `trace_event_flow`) appear first — they carry verified class chains and anchor the answer before softer semantic search evidence. Results are deduplicated across tool calls by fingerprinting paragraph segments (first 200 chars); duplicate content from two tools is dropped to reclaim context budget. Each section is labelled `[STRUCTURAL]` or `[SEMANTIC]` and the system prompt tells the LLM to prefer STRUCTURAL when sources conflict.
+
+**Query variants (`agent/tools.py`, `agent/rag_chain.py`):** `search_deep` and the RAG chain each run 10 targeted query variants (raised from 7/8) covering: service/business logic, REST endpoints, entities/repos, config/Feign/Kafka, Angular frontend, method call graphs, **security/auth (@PreAuthorize, JWT, roles)**, **exception handling (@ControllerAdvice)**, **Kafka event/config (topic, property)**. Chat-mode `search_codebase` retrieves 16 candidates and reranks to best 8 using `_rerank_hits` (was raw top-k=8 with no reranking).
+
+**Graph traversal enrichment (`graph/graph_store.py`):** `_get_digest_queries(project, class_name)` reads `@Query` JPQL/SQL strings from digest files on demand (graph nodes don't carry them — only the digest JSON does). Called by `_format_forward_chain()` for `spring_repository` nodes (used by `trace_request`) and by `describe_feature()` for dependency repositories. `trace_request()` also appends `[AUTH: required, roles=[...]]` or `[AUTH: public]` to every endpoint label.
+
 **Knowledge graph (`graph/`):** A directed property graph stored as JSON (`graph/knowledge_graph.json`). Nodes are keyed by `type::project::name`. Edge types: `uses_service`, `http_call`, `inferred_http_call`, `handled_by`, `depends_on`, `manages`, `jpa_relation`, `feign_calls`, `produces_event`, `consumes_event`, `publishes_to`, `part_of_feature`, `feature_uses`, `feature_calls`. `GraphStore` loads this into memory and exposes BFS traversal methods called by agent tools.
 
 **User function graph (`graph/feature_graph.py`):** Detects user-facing features from Angular component file paths (`src/app/components/<feature>/`). Creates `user_function` nodes linking Angular components → Angular services → inferred backend projects. `describe_feature()` in `graph_store.py` does fuzzy PascalCase matching (strips `Module`/`Component`/`Service` suffix, splits on word boundaries).
@@ -105,3 +113,12 @@ Chunk IDs are `"{project}::{file_path}::{idx}"`. Digest chunks use integer offse
 2. Add one line to `TOOL_CATALOGUE` in `agent/planner.py`
 3. Add a planning guideline in `PLANNER_PROMPT` for which question patterns should trigger it
 4. If it needs graph data, add a method to `graph/graph_store.py`
+
+## Documentation rule
+
+**Always update `README.md` and `CLAUDE.md` as part of every code change.** This is not optional.
+
+- `README.md` — update any section that describes behaviour that changed: "What It Understands", system component descriptions, tool tables, API reference, sample prompts, troubleshooting. If a new capability was added, add an entry. If behaviour changed, update the description.
+- `CLAUDE.md` — update the "Key design decisions" section whenever an architectural decision changes (e.g. new constants, changed defaults, new resolution strategies). Update the "Adding a new agent tool" steps if the process changes.
+
+The documentation update must be in the **same commit** as the code change — not a follow-up commit.
