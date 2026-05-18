@@ -505,32 +505,70 @@ class SpringBootParser:
             relationships=relationships,
         )]
 
-    @staticmethod
-    def _extract_document_collection(text: str, class_name: str) -> str:
+    def _extract_document_collection(self, text: str, class_name: str) -> str:
         """
         Extract the MongoDB/NoSQL collection name from @Document annotation.
 
-        Handles all common forms:
+        Handles:
           @Document("collectionName")
           @Document(collection = "collectionName")
-          @Document("baseName#{SpEL expression}")   → returns "baseName"
-          @Document                                  → returns class name
+          @Document("base#{@environment.getProperty('key') ?: ''}")
+              → resolves 'key' from application.properties, e.g. "base_dev"
+          Java string concatenation split across lines:
+              @Document("base#{@environment.getProperty"
+                      + "('key') ?: ''}")
+          @Document with no args → class name
         """
-        m = re.search(r'@Document\s*\(([^)]*)\)', text, re.DOTALL)
-        if not m:
-            return class_name  # @Document with no parens → class name as collection
-        args = m.group(1).strip()
-        if not args:
+        # Locate the opening paren of @Document(...) and collect the full argument
+        # by counting paren depth — handles nested parens inside SpEL/strings.
+        doc_m = re.search(r'@Document\s*\(', text)
+        if not doc_m:
             return class_name
-        # collection = "name" attribute form
-        coll_m = re.search(r'collection\s*=\s*["\']([^"\'#\{]+)', args)
-        if coll_m:
-            return coll_m.group(1).strip()
-        # First string literal (possibly with SpEL suffix like #{...})
-        str_m = re.search(r'["\']([^"\'#\{]+)', args)
-        if str_m:
-            return str_m.group(1).strip()
-        return class_name
+        start = doc_m.end() - 1   # position of the opening '('
+        depth = 0
+        end = start
+        for i in range(start, min(start + 800, len(text))):
+            if text[i] == '(':
+                depth += 1
+            elif text[i] == ')':
+                depth -= 1
+                if depth == 0:
+                    end = i
+                    break
+        raw_args = text[start + 1: end].strip()
+        if not raw_args:
+            return class_name
+
+        # Join Java string concatenation: "part1"  \n  + "part2" → "part1part2"
+        joined = re.sub(r'"\s*\n\s*\+\s*"', '', raw_args)
+
+        # collection = "name" named-attribute form (single quotes allowed inside)
+        coll_m = re.search(r'collection\s*=\s*"([^"]+)"', joined)
+        raw_value = coll_m.group(1) if coll_m else None
+
+        if raw_value is None:
+            # Positional string argument — capture the full double-quoted Java string
+            # (single quotes inside are allowed: SpEL uses them for property keys)
+            str_m = re.search(r'"([^"]+)"', joined)
+            raw_value = str_m.group(1) if str_m else None
+
+        if not raw_value:
+            return class_name
+
+        # Resolve SpEL: #{@environment.getProperty('key') ?: 'default'}
+        spel_idx = raw_value.find('#{')
+        if spel_idx >= 0:
+            base_name = raw_value[:spel_idx]
+            spel_expr = raw_value[spel_idx:]
+            # Extract the property key from getProperty('key')
+            prop_m = re.search(r"getProperty\s*\(\s*['\"]([^'\"]+)['\"]", spel_expr)
+            if prop_m:
+                prop_key = prop_m.group(1)
+                suffix = self._properties.get(prop_key, "")
+                return base_name + suffix   # e.g. "esazonemapping" + "" or "_dev"
+            return base_name
+
+        return raw_value.strip()
 
     def _parse_dtos(self, text: str) -> list[str]:
         classes = re.findall(r"class\s+([A-Za-z0-9_]+)", text)

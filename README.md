@@ -43,7 +43,7 @@ A fully local, offline AI agent for Angular + Spring Boot microservice projects.
 - Service beans (`@Service`) with constructor injection dependencies and method call graphs
 - Repository beans — JPA (`@Repository`, `JpaRepository`) and NoSQL (`MongoRepository`, `ReactiveMongoRepository`, `CassandraRepository`, `Neo4jRepository`, `RedisRepository`, etc.) — with `@Query` strings
 - JPA entities (`@Entity`, fully-qualified `@jakarta.persistence.Entity`) and NoSQL documents (`@Document` for MongoDB, `@RedisHash`, `@Node` for Neo4j) — Lombok-style bare private fields, `@Column`/`@Field`, `@Id`, relationships (`OneToMany`, `@DBRef`, etc.)
-- MongoDB collection name resolution from `@Document("name")`, `@Document(collection = "name")`, and SpEL expressions (`@Document("base#{SpEL}")` → `base`)
+- MongoDB collection name resolution: `@Document("name")`, `@Document(collection = "name")`, SpEL `@Document("base#{@environment.getProperty('key') ?: ''}")` — the property key is resolved from `application.properties` and appended (e.g. `esazonemapping` + `_dev` = `esazonemapping_dev`). Java string concatenation across lines is joined before parsing.
 - DTO field structures: `OrderRequest` → all fields with types, `@NotNull`/`@Size` validations, `@JsonProperty` aliases
 - Feign clients with **resolved URLs** from `application.properties` (e.g. `${ms-java.appointments.url}` → `http://ms-java-appointments:8080`) and per-method request/response types
 - Exception handlers (`@ControllerAdvice`)
