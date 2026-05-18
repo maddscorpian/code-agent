@@ -39,6 +39,19 @@ BEAN_ANNOTATIONS = {
 
 CONTROLLER_ANNOTATIONS = {"RestController", "Controller"}
 
+# NoSQL document/entity annotations — MongoDB, Redis, Neo4j, etc.
+_NOSQL_DOCUMENT_ANNOTATIONS = {"Document", "RedisHash", "Node", "DynamoDBTable"}
+
+# Spring Data repository supertypes (covers JPA, MongoDB, Redis, Cassandra, R2DBC, etc.)
+# MongoRepository/ReactiveMongoRepository typically have NO @Repository annotation on the interface.
+_REPO_SUPERTYPES = {
+    "MongoRepository", "ReactiveMongoRepository", "MongoRepositoryBase",
+    "JpaRepository", "CrudRepository", "PagingAndSortingRepository",
+    "ReactiveCrudRepository", "R2dbcRepository",
+    "CassandraRepository", "CouchbaseRepository", "Neo4jRepository",
+    "ElasticsearchRepository", "RedisRepository",
+}
+
 
 class SpringBootParser:
     def __init__(self, project_path: str):
@@ -130,11 +143,14 @@ class SpringBootParser:
                 security_config.update(self._parse_security(text))
 
         # Safety net: if AST succeeded but didn't flag has_entity, scan all files.
-        # Also catches fully-qualified @jakarta.persistence.Entity usage.
+        # Catches fully-qualified @jakarta.persistence.Entity and all NoSQL @Document variants.
         if not entities:
             for file in java_files:
                 text = self._safe_read(file)
-                if text and ("@Entity" in text or "persistence.Entity" in text):
+                if text and (
+                    "@Entity" in text or "persistence.Entity" in text
+                    or "@Document" in text or "@RedisHash" in text or "@Node" in text
+                ):
                     entities.extend(self._parse_entities(text))
 
         kafka_topics = self._build_kafka_topic_configs(consumes, produces, "\n".join(
@@ -206,7 +222,7 @@ class SpringBootParser:
                             result["bean_type"] = btype
                             break
 
-                if "Entity" in ann_names:
+                if "Entity" in ann_names or ann_names & _NOSQL_DOCUMENT_ANNOTATIONS:
                     result["has_entity"] = True
                 if "FeignClient" in ann_names:
                     result["has_feign"] = True
@@ -250,7 +266,16 @@ class SpringBootParser:
                     break
                 result["class_name"] = iface_node.name
                 ann_names = {a.name for a in (iface_node.annotations or [])}
-                if ann_names & {"Repository", "RepositoryRestResource"}:
+                # Check annotation-based and supertype-based detection.
+                # MongoRepository / ReactiveMongoRepository etc. carry no @Repository annotation.
+                extends_names: set[str] = set()
+                if iface_node.extends:
+                    for ext in (iface_node.extends or []):
+                        if hasattr(ext, "name"):
+                            extends_names.add(ext.name)
+                        elif hasattr(ext, "sub_type") and hasattr(ext.sub_type, "name"):
+                            extends_names.add(ext.sub_type.name)
+                if ann_names & {"Repository", "RepositoryRestResource"} or extends_names & _REPO_SUPERTYPES:
                     result["bean_type"] = "repository"
                 for method in (iface_node.methods or []):
                     result["method_names"].append(method.name)
@@ -419,24 +444,33 @@ class SpringBootParser:
         return rows
 
     def _parse_entities(self, text: str) -> list[EntityDigest]:
-        # Match both @Entity and fully-qualified @javax/jakarta.persistence.Entity
-        if "@Entity" not in text and "persistence.Entity" not in text:
+        has_jpa = "@Entity" in text or "persistence.Entity" in text
+        has_nosql = "@Document" in text or "@RedisHash" in text or "@Node" in text
+        if not has_jpa and not has_nosql:
             return []
-        name = self._class_name(text) or "UnknownEntity"
-        table = self._annotation_value(text, r"@Table\(([\s\S]*?)\)") or name
 
-        # Fields explicitly annotated with @Column
+        name = self._class_name(text) or "UnknownEntity"
+
+        # ── Table / collection name ───────────────────────────────────────
+        if has_jpa:
+            raw_table = self._annotation_value(text, r"@Table\(([\s\S]*?)\)") or name
+            table_name = self._extract_name_arg(raw_table)
+        else:
+            table_name = self._extract_document_collection(text, name)
+
+        # ── Fields ───────────────────────────────────────────────────────
+        # JPA uses @Column; MongoDB uses @Field; both fall back to bare private fields.
         col_fields = re.findall(
-            r"@Column(?:\([^)]*\))?\s+(?:@\w+\s+)*private\s+[\w<>?,\[\] ]+\s+(\w+)\s*[;=]", text
+            r"@(?:Column|Field)(?:\([^)]*\))?\s+(?:@\w+\s+)*private\s+[\w<>?,\[\] ]+\s+(\w+)\s*[;=]",
+            text,
         )
-        # @Id fields (primary key — always include)
+        # @Id (JPA) and org.springframework.data.annotation.@Id (Spring Data / MongoDB)
         id_fields = re.findall(
             r"@Id\b[\s\S]{0,120}?private\s+[\w<>?,\[\] ]+\s+(\w+)\s*[;=]", text
         )
         all_fields = list(dict.fromkeys(id_fields + col_fields))
 
-        # Fallback: if no @Column-annotated fields found (Lombok / bare private fields),
-        # scan all private fields in the class body so we still get a useful field list.
+        # Fallback: Lombok-style bare private fields when no @Column/@Field found
         if not col_fields:
             body_start = text.find("{", text.find(f"class {name}") if name != "UnknownEntity" else 0)
             if body_start > 0:
@@ -447,7 +481,9 @@ class SpringBootParser:
                 )
                 all_fields = list(dict.fromkeys(f for f in extra if f not in _SKIP))
 
+        # ── Relationships ─────────────────────────────────────────────────
         relationships: list[str] = []
+        # JPA relationships
         for ann, label in {
             "OneToMany": "OneToMany", "ManyToOne": "ManyToOne",
             "ManyToMany": "ManyToMany", "OneToOne": "OneToOne",
@@ -456,13 +492,45 @@ class SpringBootParser:
                 rf"@{ann}[\s\S]*?private\s+[A-Za-z0-9_<>, ?]+\s+([A-Za-z0-9_]+)\s*;", text
             ):
                 relationships.append(f"{label} -> {target}")
+        # MongoDB @DBRef (document reference to another collection)
+        for target in re.findall(
+            r"@DBRef[\s\S]{0,100}?private\s+[A-Za-z0-9_<>, ?]+\s+([A-Za-z0-9_]+)\s*;", text
+        ):
+            relationships.append(f"DBRef -> {target}")
 
         return [EntityDigest(
             name=name,
-            table=self._extract_name_arg(table),
+            table=table_name,
             fields=all_fields,
             relationships=relationships,
         )]
+
+    @staticmethod
+    def _extract_document_collection(text: str, class_name: str) -> str:
+        """
+        Extract the MongoDB/NoSQL collection name from @Document annotation.
+
+        Handles all common forms:
+          @Document("collectionName")
+          @Document(collection = "collectionName")
+          @Document("baseName#{SpEL expression}")   → returns "baseName"
+          @Document                                  → returns class name
+        """
+        m = re.search(r'@Document\s*\(([^)]*)\)', text, re.DOTALL)
+        if not m:
+            return class_name  # @Document with no parens → class name as collection
+        args = m.group(1).strip()
+        if not args:
+            return class_name
+        # collection = "name" attribute form
+        coll_m = re.search(r'collection\s*=\s*["\']([^"\'#\{]+)', args)
+        if coll_m:
+            return coll_m.group(1).strip()
+        # First string literal (possibly with SpEL suffix like #{...})
+        str_m = re.search(r'["\']([^"\'#\{]+)', args)
+        if str_m:
+            return str_m.group(1).strip()
+        return class_name
 
     def _parse_dtos(self, text: str) -> list[str]:
         classes = re.findall(r"class\s+([A-Za-z0-9_]+)", text)

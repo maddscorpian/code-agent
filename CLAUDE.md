@@ -75,6 +75,8 @@ question → Planner LLM call (picks 3–6 tools)
 
 **Java constant resolution (`digest/springboot_parser.py`):** `_build_constant_map()` scans all `.java` files for `static final String FIELD = "value"` before parsing. Used by `_extract_path_from_mapping_args()` to resolve `@GetMapping(SiteConstant.SITE_BASE_URL)` → `/api/v1/sites`.
 
+**NoSQL document entity detection (`digest/springboot_parser.py`):** `_NOSQL_DOCUMENT_ANNOTATIONS = {"Document", "RedisHash", "Node", "DynamoDBTable"}` — the AST parser flags `has_entity=True` for any of these, just like `@Entity`. `_parse_entities()` branches on `has_jpa` vs `has_nosql`: for MongoDB it calls `_extract_document_collection()` to get the collection name. SpEL in `@Document("base#{SpEL}")` is handled by extracting everything before `#{`. `@Field` is treated the same as `@Column` for field extraction; `@DBRef` is treated like JPA `@OneToMany`. `_REPO_SUPERTYPES` covers `MongoRepository`, `ReactiveMongoRepository`, and all other Spring Data supertypes — interfaces that extend these are detected as repositories even without `@Repository` annotation.
+
 **SpEL + property resolution for Kafka:** `@KafkaListener(topics = "#{'${spring.kafka.consumer.topic}'}")` — the `_resolve()` helper in `_parse_events()` handles SpEL wrappers `#{...}`, strips inner `'...'` string quotes, then resolves `${prop}` against `_properties` (loaded from `application.properties`).
 
 **Feign URL resolution:** `_build_properties_map()` loads `application.properties`/`.yml`. Feign `url = "${ms-java.appointments.url}"` is resolved to the actual host value during `_parse_feign()`.
