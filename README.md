@@ -41,7 +41,7 @@ A fully local, offline AI agent for Angular + Spring Boot microservice projects.
 **Spring Boot:**
 - REST controllers (endpoints, methods, request/response DTOs, auth/roles) — including multi-line annotation args
 - Service beans (`@Service`) with constructor injection dependencies and method call graphs
-- Repository beans — JPA (`@Repository`, `JpaRepository`) and NoSQL (`MongoRepository`, `ReactiveMongoRepository`, `CassandraRepository`, `Neo4jRepository`, `RedisRepository`, etc.) — with `@Query` strings
+- Repository beans — JPA + NoSQL (`MongoRepository`, `ReactiveMongoRepository`, etc.) — with `@Query` JPQL strings **and** derived Spring Data query descriptions (`findByEsaAndProducttype` → `SELECT WHERE esa = ? AND producttype = ?`, `countByStatus` → `COUNT WHERE status = ?`)
 - JPA entities (`@Entity`, fully-qualified `@jakarta.persistence.Entity`) and NoSQL documents (`@Document` for MongoDB, `@RedisHash`, `@Node` for Neo4j) — Lombok-style bare private fields, `@Column`/`@Field`, `@Id`, relationships (`OneToMany`, `@DBRef`, etc.)
 - MongoDB collection name resolution: `@Document("name")`, `@Document(collection = "name")`, SpEL `@Document("base#{@environment.getProperty('key') ?: ''}")` — the property key is resolved from `application.properties` and appended (e.g. `esazonemapping` + `_dev` = `esazonemapping_dev`). Java string concatenation across lines is joined before parsing.
 - DTO field structures: `OrderRequest` → all fields with types, `@NotNull`/`@Size` validations, `@JsonProperty` aliases
@@ -232,7 +232,8 @@ sequenceDiagram
 | `trace_request` | `/api/path` or `GET /api/path` | Trace endpoint Angular→DB |
 | `find_callers` | class name or path | "Who calls OrderService?" |
 | `impact_graph` | class or entity name | "What breaks if I change X?" |
-| `get_method_calls` | `ClassName` or `service::ClassName` | Service method call graph |
+| `get_method_calls` | `ClassName` or `service::ClassName` | Service method call graph + derived Spring Data query descriptions |
+| `get_method_implementation` | `ClassName::methodName` or `ClassName` | **Actual Java source code** of a method — reads source file directly, not just call graphs |
 | `get_dto_schema` | DTO class name | "What fields does OrderRequest have?" |
 | `get_external_calls` | service name or `""` | "What does ms-java-order call downstream?" |
 | `get_all_endpoints` | service name | List all endpoints + beans for a service |

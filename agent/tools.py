@@ -242,6 +242,104 @@ def search_deep(query: str) -> str:
     )
 
 
+def _extract_method_body(source: str, method_name: str) -> str:
+    """
+    Locate a method by name in Java source and return its body (brace-depth scan).
+    Returns up to 3000 chars. Returns "" if not found.
+    """
+    sig_re = re.compile(
+        rf'(?:(?:public|private|protected|static|final|synchronized|override)\s+)*'
+        rf'[\w<>\[\],\s]+\s+{re.escape(method_name)}\s*\(',
+    )
+    m = sig_re.search(source)
+    if not m:
+        return ""
+    brace_start = source.find('{', m.start())
+    if brace_start == -1:
+        return ""
+    depth = 0
+    for i in range(brace_start, min(brace_start + 4000, len(source))):
+        if source[i] == '{':
+            depth += 1
+        elif source[i] == '}':
+            depth -= 1
+            if depth == 0:
+                return source[brace_start: i + 1].strip()[:3000]
+    return source[brace_start: brace_start + 3000].strip()
+
+
+def get_method_implementation(query: str) -> str:
+    """
+    Return the actual source code of a service or repository method.
+    Input: "ClassName::methodName" or "ClassName.methodName" or just "ClassName"
+    Locates the file via the digest, reads it, and extracts the specific method body.
+    """
+    # Parse class and optional method from input
+    method_name: str | None = None
+    if "::" in query:
+        class_name, method_name = query.split("::", 1)
+    elif "." in query and query[query.rfind(".") + 1].islower():
+        class_name, method_name = query.rsplit(".", 1)
+    else:
+        class_name = query
+    class_name = class_name.strip()
+    if method_name:
+        method_name = method_name.strip().rstrip("()")
+
+    # Find class in digests
+    for f in DIGESTS.glob("*.digest.json"):
+        if f.name == "master.digest.json":
+            continue
+        try:
+            data = json.loads(f.read_text(encoding="utf-8"))
+        except Exception:
+            continue
+        for bean in data.get("beans", []):
+            if bean.get("name", "").lower() != class_name.lower():
+                continue
+            project = data.get("project", "")
+            file_rel = bean.get("file_path", "")
+            if not file_rel:
+                return f"{class_name} found in {project} but file_path missing from digest."
+            # Resolve absolute path via project loader
+            proj_obj = LOADER.get_project(project)
+            if not proj_obj:
+                return f"{class_name} found in project '{project}' but project not in projects.yaml."
+            abs_path = Path(proj_obj.path) / file_rel
+            if not abs_path.exists():
+                return f"Source file not found at {abs_path}"
+            source = abs_path.read_text(encoding="utf-8", errors="ignore")
+
+            if not method_name:
+                # No method specified — return class overview (first 3000 chars)
+                return f"Source of {class_name} [{project}] ({file_rel}):\n{source[:3000]}"
+
+            body = _extract_method_body(source, method_name)
+            if body:
+                return (
+                    f"Implementation of {class_name}.{method_name}() "
+                    f"[{project}] ({file_rel}):\n\n{body}"
+                )
+            # Method not found in source — check method_bodies from digest
+            mb = bean.get("method_bodies", {})
+            if method_name in mb:
+                return (
+                    f"Implementation of {class_name}.{method_name}() "
+                    f"[{project}] (from digest excerpt):\n\n{mb[method_name]}"
+                )
+            # List available methods as fallback
+            available = bean.get("methods", [])
+            return (
+                f"Method '{method_name}' not found in {class_name} [{project}].\n"
+                f"Available methods: {', '.join(available[:20])}"
+            )
+
+    return (
+        f"Class '{class_name}' not found in any digest. "
+        f"It may not be a @Service/@Repository, or not yet indexed — run /reindex."
+    )
+
+
 def get_method_calls(class_name: str) -> str:
     """
     Look up the method call graph for a class from the digest.
@@ -444,6 +542,7 @@ def build_tools_map() -> dict:
         "search_by_project": search_by_project,
         "search_deep": search_deep,
         "get_method_calls": get_method_calls,
+        "get_method_implementation": get_method_implementation,
         "get_all_endpoints": get_all_endpoints,
         "get_api_contracts": get_api_contracts,
         "get_service_dependencies": get_service_dependencies,
@@ -480,6 +579,12 @@ def build_tools() -> list[Tool]:
                  "Look up the method call graph for a @Service or @Repository class from the digest. "
                  "Shows which injected dependency methods each service method calls. "
                  "Input: 'ClassName' or 'service-name::ClassName'."
+             )),
+        Tool(name="get_method_implementation", func=get_method_implementation,
+             description=(
+                 "Return the actual Java source code of a specific service or repository method. "
+                 "Reads the source file directly — shows real business logic, not just call graphs. "
+                 "Input: 'ClassName::methodName' or 'ClassName.methodName' or just 'ClassName'."
              )),
         # Digest tools
         Tool(name="get_all_endpoints", func=get_all_endpoints,

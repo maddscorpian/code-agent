@@ -113,6 +113,18 @@ class Chunker:
                         "source": "digest", "project": project, "type": "method_call_graph",
                         "name": bean.get("name", "bean"), "class_name": bean.get("name"),
                     }))
+                # Method body excerpts — one chunk per non-trivial service method
+                method_bodies = bean.get("method_bodies", {})
+                for j, (mname, mbody) in enumerate(list(method_bodies.items())[:8]):
+                    mb_content = (
+                        f"Implementation of {bean.get('name')}.{mname}() [{project}]:\n"
+                        f"{mbody}"
+                    )
+                    rows.append(self._chunk_dict(project, str(file), 3600 + i * 10 + j, mb_content, {
+                        "source": "digest", "project": project, "type": "method_body",
+                        "name": bean.get("name", "bean"), "class_name": bean.get("name"),
+                        "method_name": mname,
+                    }))
 
             # Exception handlers
             for i, eh in enumerate(data.get("exception_handlers", [])):

@@ -93,18 +93,26 @@ class SpringBootParser:
                     endpoints.extend(self._parse_controllers(text))
                 elif bean_type in BEAN_ANNOTATIONS.values() and bean_type != "advice":
                     dep_names = ast_info.get("dependencies", [])
+                    method_names = ast_info.get("method_names", [])
                     method_calls = self._extract_method_call_graph(text, dep_names)
                     queries = self._parse_repository_queries(text) if bean_type == "repository" else []
+                    # Extract bodies for service methods (not repositories — they have no bodies)
+                    method_bodies = (
+                        self._extract_method_bodies(text, method_names)
+                        if bean_type == "service"
+                        else {}
+                    )
                     beans.append(
                         BeanDigest(
                             name=class_name,
                             bean_type=bean_type,
                             file_path=rel,
                             dependencies=dep_names,
-                            methods=ast_info.get("method_names", []),
+                            methods=method_names,
                             transactional_methods=ast_info.get("transactional_methods", []),
                             method_calls=method_calls,
                             queries=queries,
+                            method_bodies=method_bodies,
                         )
                     )
                 elif bean_type == "advice":
@@ -374,16 +382,144 @@ class SpringBootParser:
 
     @staticmethod
     def _parse_repository_queries(text: str) -> list[str]:
-        """Extract @Query JPQL/HQL/SQL strings from repository interfaces."""
+        """Extract @Query JPQL/HQL/SQL strings and describe derived Spring Data query methods."""
         queries: list[str] = []
+
+        # Explicit @Query annotations
         for m in re.finditer(
             r'@Query\s*\(\s*(?:value\s*=\s*)?["\']([^"\']{10,})["\']',
             text, re.MULTILINE,
         ):
             q = m.group(1).strip()
             if q:
-                queries.append(q[:300])   # cap individual query length
+                queries.append(q[:300])
+
+        # Derived Spring Data query methods (generated at runtime from method name)
+        _DERIVED_PREFIXES = (
+            "findBy", "findAllBy", "findFirstBy", "findTopBy",
+            "countBy", "existsBy", "deleteBy", "removeBy",
+            "streamBy", "readBy", "getBy",
+        )
+        seen: set[str] = set()
+        for m in re.finditer(r'\b([a-z][A-Za-z0-9]+By[A-Za-z0-9]+)\s*\(', text):
+            method_sig = m.group(1)
+            if method_sig in seen:
+                continue
+            if any(method_sig.startswith(p) for p in _DERIVED_PREFIXES):
+                seen.add(method_sig)
+                desc = SpringBootParser._describe_derived_query(method_sig)
+                queries.append(f"[derived] {method_sig}: {desc}")
+
         return queries
+
+    @staticmethod
+    def _describe_derived_query(method_name: str) -> str:
+        """
+        Translate a Spring Data derived query method name into a human-readable description.
+        e.g. findByEsaAndProducttype → SELECT WHERE esa = ? AND producttype = ?
+        """
+        _PREFIX_MAP = {
+            "findBy": "SELECT WHERE", "findAllBy": "SELECT ALL WHERE",
+            "findFirstBy": "SELECT FIRST WHERE", "findTopBy": "SELECT TOP WHERE",
+            "countBy": "COUNT WHERE", "existsBy": "EXISTS WHERE",
+            "deleteBy": "DELETE WHERE", "removeBy": "DELETE WHERE",
+            "streamBy": "STREAM WHERE", "readBy": "SELECT WHERE", "getBy": "SELECT WHERE",
+        }
+        # Strip known prefix
+        action = "SELECT WHERE"
+        remainder = method_name
+        for prefix, desc in _PREFIX_MAP.items():
+            if method_name.startswith(prefix):
+                action = desc
+                remainder = method_name[len(prefix):]
+                break
+
+        # Strip trailing OrderBy / Limit / Top / First clauses
+        order_m = re.search(r'OrderBy[A-Z].*$', remainder)
+        order_clause = ""
+        if order_m:
+            order_clause = f" ORDER BY {re.sub(r'([A-Z])', r' \1', order_m.group(0)[7:]).lower().strip()}"
+            remainder = remainder[:order_m.start()]
+
+        # Split on And / Or (keep delimiter)
+        parts = re.split(r'(And|Or)', remainder)
+        conditions: list[str] = []
+        i = 0
+        while i < len(parts):
+            field = parts[i]
+            if not field or field in ("And", "Or"):
+                i += 1
+                continue
+            connector = ""
+            if i + 1 < len(parts) and parts[i + 1] in ("And", "Or"):
+                connector = " " + parts[i + 1].upper()
+                i += 1
+
+            # Detect keyword suffixes: IsNull, IsNotNull, Like, In, Between, GreaterThan, etc.
+            _SUFFIX_MAP = {
+                "IsNull": "IS NULL", "IsNotNull": "IS NOT NULL",
+                "Like": "LIKE ?", "NotLike": "NOT LIKE ?",
+                "In": "IN (?)", "NotIn": "NOT IN (?)",
+                "Between": "BETWEEN ? AND ?",
+                "GreaterThan": "> ?", "GreaterThanEqual": ">= ?",
+                "LessThan": "< ?", "LessThanEqual": "<= ?",
+                "Before": "< ?", "After": "> ?",
+                "True": "= true", "False": "= false",
+                "Containing": "LIKE %?%", "StartingWith": "LIKE ?%", "EndingWith": "LIKE %?",
+            }
+            condition = f"{re.sub(r'([A-Z])', r'_\1', field).lstrip('_').lower()} = ?"
+            for suffix, sql in _SUFFIX_MAP.items():
+                if field.endswith(suffix):
+                    col = re.sub(r'([A-Z])', r'_\1', field[:-len(suffix)]).lstrip('_').lower()
+                    condition = f"{col} {sql}"
+                    break
+
+            conditions.append(condition + connector)
+            i += 1
+
+        cond_str = " ".join(conditions) if conditions else remainder
+        return f"{action} {cond_str}{order_clause}"
+
+    @staticmethod
+    def _extract_method_bodies(text: str, method_names: list[str]) -> dict[str, str]:
+        """
+        Extract the body of each named method from Java source using brace-depth scanning.
+        Returns {method_name: body_text} capped at 500 chars.
+        Skips trivial methods: bare getters (return field;) and setters (this.x = x;).
+        """
+        _TRIVIAL = re.compile(
+            r'^\s*\{?\s*(?:return\s+\w+\s*;|this\.\w+\s*=\s*\w+\s*;)\s*\}?\s*$'
+        )
+        bodies: dict[str, str] = {}
+        for name in method_names:
+            # Find method signature: optional modifiers + name + (
+            sig_pattern = re.compile(
+                rf'(?:(?:public|private|protected|static|final|synchronized|async|override)\s+)*'
+                rf'[\w<>\[\],\s]+\s+{re.escape(name)}\s*\(',
+            )
+            m = sig_pattern.search(text)
+            if not m:
+                continue
+            # Scan forward to the opening { of the method body
+            brace_start = text.find('{', m.start())
+            if brace_start == -1:
+                continue
+            # Collect body via brace-depth counting
+            depth = 0
+            end = brace_start
+            for i in range(brace_start, min(brace_start + 3000, len(text))):
+                if text[i] == '{':
+                    depth += 1
+                elif text[i] == '}':
+                    depth -= 1
+                    if depth == 0:
+                        end = i + 1
+                        break
+            body = text[brace_start:end].strip()
+            if not body or _TRIVIAL.match(body):
+                continue
+            bodies[name] = body[:500]
+        return bodies
 
     # ------------------------------------------------------------------
     # Regex-based extraction (kept from v1, used for annotation values)

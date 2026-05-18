@@ -76,7 +76,8 @@ class BeanDigest(BaseModel):
     methods: list[str] = Field(default_factory=list)
     transactional_methods: list[str] = Field(default_factory=list)
     method_calls: dict[str, list[str]] = Field(default_factory=dict)  # {method: [dep.call(), ...]}
-    queries: list[str] = Field(default_factory=list)                  # JPQL/SQL from @Query
+    queries: list[str] = Field(default_factory=list)                  # JPQL/SQL from @Query + derived query descriptions
+    method_bodies: dict[str, str] = Field(default_factory=dict)       # {method: first 500 chars of body}
 
 
 class ScheduledTaskDigest(BaseModel):

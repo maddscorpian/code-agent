@@ -35,6 +35,7 @@ Available tools (name: description — input format):
   search_codebase       : quick semantic search over all code & digests — any query string
   search_by_project     : project-scoped semantic search — "<project>::<query>"
   get_method_calls      : method call graph for a @Service/@Repository — "ClassName" or "service-name::ClassName"
+  get_method_implementation : actual Java source code of a service/repository method — "ClassName::methodName" or "ClassName"
   trace_request         : trace endpoint end-to-end (Angular→Controller→Service→Repo→Entity) — "/api/path" or "GET /api/path"
   find_callers          : find everything that calls a class, endpoint, or Kafka topic — class name or "/api/path"
   impact_graph          : BFS impact analysis — class name or entity name (use for "what breaks if…" questions)
@@ -69,6 +70,8 @@ Planning guidelines:
 - "what can a user do" / "what features exist" → list_features + search_deep
 - deep/architecture/flow questions → search_deep + trace_request + get_method_calls (for key service classes)
 - "how does X work" questions      → trace_request + search_deep + get_method_calls (on the main service)
+- "how does [method] work" / "what does [methodName] do" / "show me implementation of" / "what is the logic in" → get_method_implementation("ClassName::methodName") + get_method_calls("ClassName")
+- "what does [Repository] query" / "how does findBy work" → get_method_calls (queries include derived descriptions) + get_method_implementation
 - "who calls X" questions          → find_callers + search_deep
 - "what breaks if I change X"      → impact_graph + search_deep
 - "how does event X flow" / "who consumes X events" / "what events does X produce" → trace_event_flow + search_deep
@@ -231,6 +234,16 @@ def _default_plan(question: str, mode: str) -> PlanResult:
         entity = _extract_subject(question)
         if entity:
             calls.append(ToolCall("get_entity_schema", entity))
+
+    elif any(w in q for w in ("implementation", "source code", "logic in", "body of", "how does", "what does")) and re.search(r'\b[a-z][A-Za-z]+[A-Z][a-z]', question):
+        # Likely asking about a specific method — camelCase detected
+        subject = _extract_subject(question) or question[:40]
+        method_m = re.search(r'\b([a-z][A-Za-z]+[A-Z][a-z][A-Za-z]*)\b', question)
+        method = method_m.group(1) if method_m else ""
+        impl_input = f"{subject}::{method}" if method and subject else subject or question[:40]
+        calls.append(ToolCall("get_method_implementation", impl_input))
+        calls.append(ToolCall("get_method_calls", subject))
+        calls.append(ToolCall("search_deep", question))
 
     elif any(w in q for w in ("who calls", "what calls", "callers of", "uses")):
         subject = _extract_subject(question) or question[:40]
