@@ -27,14 +27,22 @@ class AgentCore:
             from .loop import AgentLoop
             from .tools import build_tools_map
 
-            llm = Ollama(
+            # Planner: small context (output is short JSON), fast response
+            planner_llm = Ollama(
                 model=self.rag.model,
                 base_url=self.rag.base_url,
-                num_ctx=16384,
+                num_ctx=4096,
+                temperature=0.1,
+            )
+            # Synthesizer: larger context for gathered tool results
+            synth_llm = Ollama(
+                model=self.rag.model,
+                base_url=self.rag.base_url,
+                num_ctx=8192,
                 temperature=0.15,
                 top_p=0.95,
             )
-            self._loop = AgentLoop(llm=llm, tools_map=build_tools_map())
+            self._loop = AgentLoop(llm=synth_llm, planner_llm=planner_llm, tools_map=build_tools_map())
             logger.info("AgentLoop initialised (model=%s)", self.rag.model)
         except Exception as exc:
             logger.warning("AgentLoop init failed (%s) — falling back to RAGChain only", exc)

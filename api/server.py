@@ -13,7 +13,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, StreamingResponse
 
 from agent.agent_core import AgentCore
-from agent.loop import _PLAN_SENTINEL, _PLAN_SENTINEL_END
+from agent.loop import _PLAN_SENTINEL, _PLAN_SENTINEL_END, _PROGRESS_SENTINEL, _PROGRESS_SENTINEL_END
 from agent.session_store import SessionStore
 from graph.graph_store import GraphStore
 from api.middleware import request_logger
@@ -114,8 +114,10 @@ def ask_stream(req: AskRequest):
         tokens: list[str] = []
         try:
             for chunk in agent_core.stream_run(req.question, mode, req.file_context, history):
-                # Intercept plan sentinel emitted by AgentLoop before synthesis tokens
-                if chunk.startswith(_PLAN_SENTINEL) and _PLAN_SENTINEL_END in chunk:
+                if chunk.startswith(_PROGRESS_SENTINEL) and _PROGRESS_SENTINEL_END in chunk:
+                    prog_json = chunk[len(_PROGRESS_SENTINEL): chunk.index(_PROGRESS_SENTINEL_END)]
+                    yield f"event: progress\ndata: {prog_json}\n\n"
+                elif chunk.startswith(_PLAN_SENTINEL) and _PLAN_SENTINEL_END in chunk:
                     plan_json = chunk[len(_PLAN_SENTINEL): chunk.index(_PLAN_SENTINEL_END)]
                     yield f"event: plan\ndata: {plan_json}\n\n"
                 else:

@@ -28,7 +28,7 @@ class RAGChain:
         self.llm = Ollama(
             model=self.model,
             base_url=self.base_url,
-            num_ctx=16384,
+            num_ctx=8192,
             temperature=0.15,
             top_p=0.95,
         )

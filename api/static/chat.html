@@ -444,6 +444,17 @@
               sessionId = data;
               localStorage.setItem("chat_session_id", sessionId);
               updateSessionBadge();
+            } else if (type === "progress") {
+              try {
+                const prog = JSON.parse(data);
+                if (prog.stage === "planning") {
+                  statusEl.textContent = "thinking — planning tool calls…";
+                } else if (prog.stage === "tool") {
+                  statusEl.textContent = `running: ${prog.tool} (${prog.n} of ${prog.total})…`;
+                } else if (prog.stage === "synthesizing") {
+                  statusEl.textContent = "synthesizing answer…";
+                }
+              } catch (_) { /* ignore */ }
             } else if (type === "plan") {
               planReceived = true;
               try {

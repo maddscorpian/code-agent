@@ -18,6 +18,7 @@ class GraphStore:
         self._edges: list[dict] = []
         self._out: dict[str, list[dict]] = defaultdict(list)   # node_id → outgoing edges
         self._in: dict[str, list[dict]] = defaultdict(list)    # node_id → incoming edges
+        self._digest_query_cache: dict | None = None            # {project: {class_lower: [queries]}}
         self.load()
 
     # ------------------------------------------------------------------
@@ -25,6 +26,7 @@ class GraphStore:
     # ------------------------------------------------------------------
 
     def load(self) -> None:
+        self._digest_query_cache = None   # invalidate on reload
         if not self.graph_path.exists():
             return
         try:
@@ -629,22 +631,26 @@ class GraphStore:
         return result
 
     def _get_digest_queries(self, project: str, class_name: str) -> list[str]:
-        """Load @Query JPQL/SQL strings for a repository class from its digest file on demand.
-        Graph nodes do not carry query strings — we read the digest directly."""
-        digests_dir = self.graph_path.parent.parent / "digests"
-        for digest_file in digests_dir.glob("*.digest.json"):
-            if digest_file.name == "master.digest.json":
-                continue
-            try:
-                data = json.loads(digest_file.read_text(encoding="utf-8"))
-            except Exception:
-                continue
-            if data.get("project") != project:
-                continue
-            for bean in data.get("beans", []):
-                if bean.get("name", "").lower() == class_name.lower():
-                    return [q[:300] for q in bean.get("queries", [])[:5]]
-        return []
+        """Return @Query JPQL/SQL strings for a repository class.
+        Reads all digest files once on first call; subsequent calls are O(1) dict lookups."""
+        if self._digest_query_cache is None:
+            self._digest_query_cache = {}
+            digests_dir = self.graph_path.parent.parent / "digests"
+            for digest_file in digests_dir.glob("*.digest.json"):
+                if digest_file.name == "master.digest.json":
+                    continue
+                try:
+                    data = json.loads(digest_file.read_text(encoding="utf-8"))
+                except Exception:
+                    continue
+                proj = data.get("project", "")
+                self._digest_query_cache.setdefault(proj, {})
+                for bean in data.get("beans", []):
+                    name_key = bean.get("name", "").lower()
+                    queries = [q[:300] for q in bean.get("queries", [])[:5]]
+                    if queries:
+                        self._digest_query_cache[proj][name_key] = queries
+        return self._digest_query_cache.get(project, {}).get(class_name.lower(), [])
 
     def _format_forward_chain(self, node_id: str, lines: list[str],
                               indent: int, visited: set[str], max_depth: int) -> None:

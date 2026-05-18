@@ -12,6 +12,10 @@ logger = logging.getLogger(__name__)
 _PLAN_SENTINEL = "__PLAN__"
 _PLAN_SENTINEL_END = "__END_PLAN__"
 
+# Progress sentinels — emitted before each phase so the server can send event: progress
+_PROGRESS_SENTINEL = "__PROGRESS__"
+_PROGRESS_SENTINEL_END = "__END_PROGRESS__"
+
 # Cap tool output — raised to 12000 to preserve more of search_deep's 30-chunk results
 _MAX_TOOL_OUTPUT = 12000
 
@@ -207,10 +211,10 @@ class AgentLoop:
       3. Synthesizer LLM call: produce final answer from gathered context
     """
 
-    def __init__(self, llm, tools_map: dict):
+    def __init__(self, llm, tools_map: dict, planner_llm=None):
         self.llm = llm
         self.tools_map = tools_map
-        self.planner = Planner(llm)
+        self.planner = Planner(planner_llm if planner_llm is not None else llm)
 
     # ------------------------------------------------------------------
     # Non-streaming
@@ -251,29 +255,48 @@ class AgentLoop:
         history: list[dict] | None = None,
     ) -> Iterator[str]:
         """
-        Generator that yields tokens.
-        The very first yielded value is a plan sentinel so the caller can emit
-        an SSE `event: plan` before the synthesis tokens begin.
+        Generator that yields tokens interleaved with progress and plan sentinels.
 
-        Sentinel format:
-            __PLAN__<json_string>__END_PLAN__
+        Sentinel formats (parsed by server.py, never shown to user):
+            __PROGRESS__{"stage":"planning"}__END_PROGRESS__
+            __PROGRESS__{"stage":"tool","tool":"search_deep","n":1,"total":3}__END_PROGRESS__
+            __PROGRESS__{"stage":"synthesizing"}__END_PROGRESS__
+            __PLAN__{"reasoning":"...","tools":[...]}__END_PLAN__
         """
         import json
+        history = history or []
 
-        plan = self.planner.plan(question, mode, history or [])
+        # ── Phase 1: Planning ─────────────────────────────────────────────
+        yield f"{_PROGRESS_SENTINEL}{json.dumps({'stage': 'planning'})}{_PROGRESS_SENTINEL_END}"
+        plan = self.planner.plan(question, mode, history)
         logger.info("Plan (stream) reasoning: %s | tools: %s",
                     plan.reasoning, [tc.tool for tc in plan.tool_calls])
 
-        tool_results = self._execute(plan.tool_calls)
+        # ── Phase 2: Tool execution (inline — progress emitted per tool) ──
+        tool_results: list[dict] = []
+        total = len(plan.tool_calls)
+        for idx, tc in enumerate(plan.tool_calls, start=1):
+            yield f"{_PROGRESS_SENTINEL}{json.dumps({'stage': 'tool', 'tool': tc.tool, 'n': idx, 'total': total})}{_PROGRESS_SENTINEL_END}"
+            fn = self.tools_map.get(tc.tool)
+            if fn is None:
+                logger.warning("Unknown tool %r — skipping", tc.tool)
+                continue
+            try:
+                raw = fn(tc.input)
+                result = str(raw).strip()
+                logger.debug("Tool %s(%r) → %d chars", tc.tool, tc.input, len(result))
+            except Exception as exc:
+                result = f"[Tool error: {exc}]"
+                logger.warning("Tool %s failed: %s", tc.tool, exc)
+            tool_results.append({"tool": tc.tool, "input": tc.input, "result": result})
 
-        # Emit plan metadata as the first "token" — server converts to SSE event
-        plan_data = {
-            "reasoning": plan.reasoning,
-            "tools": [tc.tool for tc in plan.tool_calls],
-        }
+        # ── Emit plan strip (existing behaviour) ──────────────────────────
+        plan_data = {"reasoning": plan.reasoning, "tools": [tc.tool for tc in plan.tool_calls]}
         yield f"{_PLAN_SENTINEL}{json.dumps(plan_data)}{_PLAN_SENTINEL_END}"
 
-        prompt = _synthesis_prompt(question, mode, tool_results, file_context, history or [])
+        # ── Phase 3: Synthesis ────────────────────────────────────────────
+        yield f"{_PROGRESS_SENTINEL}{json.dumps({'stage': 'synthesizing'})}{_PROGRESS_SENTINEL_END}"
+        prompt = _synthesis_prompt(question, mode, tool_results, file_context, history)
         for token in self.llm.stream(prompt):
             yield str(token)
 
