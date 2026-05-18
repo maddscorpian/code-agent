@@ -101,7 +101,13 @@ class GraphStore:
 
             # ── Backend chain (forward from endpoint)
             lines.append("\n[Backend Chain]")
-            lines.append(f"  {ep['label']}")
+            if ep.get("auth_required") and ep.get("roles"):
+                auth_str = f"  [AUTH: required, roles={ep['roles']}]"
+            elif ep.get("auth_required"):
+                auth_str = "  [AUTH: required]"
+            else:
+                auth_str = "  [AUTH: public]"
+            lines.append(f"  {ep['label']}{auth_str}")
             self._format_forward_chain(ep["id"], lines, indent=4, visited=set(), max_depth=5)
 
         return "\n".join(lines)
@@ -377,6 +383,12 @@ class GraphStore:
                                 f"    [{dep.get('type', '')}] {dep.get('name', '')}"
                                 + (f": {', '.join(dep_methods)}" if dep_methods else "")
                             )
+                            if dep.get("type") == "spring_repository":
+                                queries = self._get_digest_queries(
+                                    dep.get("project", ""), dep.get("name", "")
+                                )
+                                for q in queries[:3]:
+                                    lines.append(f"      @Query: {q}")
 
         # Kafka / RabbitMQ events — traverse feature_calls beans and their project peers
         # The user_function node itself has no event edges; they are on the Spring service beans.
@@ -616,6 +628,24 @@ class GraphStore:
                     queue.append((src, depth + 1))
         return result
 
+    def _get_digest_queries(self, project: str, class_name: str) -> list[str]:
+        """Load @Query JPQL/SQL strings for a repository class from its digest file on demand.
+        Graph nodes do not carry query strings — we read the digest directly."""
+        digests_dir = self.graph_path.parent.parent / "digests"
+        for digest_file in digests_dir.glob("*.digest.json"):
+            if digest_file.name == "master.digest.json":
+                continue
+            try:
+                data = json.loads(digest_file.read_text(encoding="utf-8"))
+            except Exception:
+                continue
+            if data.get("project") != project:
+                continue
+            for bean in data.get("beans", []):
+                if bean.get("name", "").lower() == class_name.lower():
+                    return [q[:300] for q in bean.get("queries", [])[:5]]
+        return []
+
     def _format_forward_chain(self, node_id: str, lines: list[str],
                               indent: int, visited: set[str], max_depth: int) -> None:
         if max_depth == 0 or node_id in visited:
@@ -632,6 +662,12 @@ class GraphStore:
                 fields = target.get("fields", [])[:6]
                 if fields:
                     lines.append(f"{prefix}  fields: {', '.join(fields)}")
+            elif target.get("type") == "spring_repository":
+                queries = self._get_digest_queries(target.get("project", ""), target.get("name", ""))
+                if queries:
+                    lines.append(f"{prefix}  @Query ({len(queries)}):")
+                    for q in queries:
+                        lines.append(f"{prefix}    {q}")
             self._format_forward_chain(target_id, lines, indent + 2, visited, max_depth - 1)
 
     @staticmethod

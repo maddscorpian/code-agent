@@ -25,7 +25,13 @@ class RAGChain:
         self.model = os.getenv("OLLAMA_MODEL", "deepseek-coder-v2")
         self.embed_model = os.getenv("OLLAMA_EMBED_MODEL", "nomic-embed-text")
         self.base_url = os.getenv("OLLAMA_HOST", "http://localhost:11434")
-        self.llm = Ollama(model=self.model, base_url=self.base_url)
+        self.llm = Ollama(
+            model=self.model,
+            base_url=self.base_url,
+            num_ctx=16384,
+            temperature=0.15,
+            top_p=0.95,
+        )
         self.embeddings = OllamaEmbeddings(model=self.embed_model, base_url=self.base_url)
         self.store = VectorStore(os.getenv("CHROMA_PATH", "./vector_db"))
 
@@ -125,6 +131,9 @@ class RAGChain:
             f"configuration properties Feign Kafka event publisher: {question}",
             f"Angular component service HTTP call frontend: {question}",
             f"method call graph dependencies injection: {question}",
+            f"security authentication authorization @PreAuthorize JWT role: {question}",
+            f"exception error handling @ControllerAdvice fault tolerance: {question}",
+            f"Kafka event topic property configuration value: {question}",
         ]
         # Targeted variant using service name if present
         svc = re.search(r'ms-java-[\w-]+|module-java-[\w-]+', question)
@@ -134,7 +143,7 @@ class RAGChain:
         cls = re.search(r'\b([A-Z][a-z]+(?:[A-Z][a-z]+)+)\b', question)
         if cls:
             variants.append(f"{cls.group(1)} method calls dependencies implementation")
-        return variants[:8]
+        return variants[:10]
 
     # ------------------------------------------------------------------
     # Change 1: multi-hop retrieval

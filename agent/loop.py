@@ -12,8 +12,18 @@ logger = logging.getLogger(__name__)
 _PLAN_SENTINEL = "__PLAN__"
 _PLAN_SENTINEL_END = "__END_PLAN__"
 
-# Cap tool output — search_deep returns up to 30 chunks so needs more room
-_MAX_TOOL_OUTPUT = 6000
+# Cap tool output — raised to 12000 to preserve more of search_deep's 30-chunk results
+_MAX_TOOL_OUTPUT = 12000
+
+# Fingerprint length used for cross-tool deduplication
+_DEDUP_FINGERPRINT_LEN = 200
+
+# Structural/graph tools produce verified class chains — higher signal than semantic search.
+# Placed first in the synthesis context so the LLM anchors on them before softer evidence.
+_STRUCTURAL_TOOLS = frozenset({
+    "describe_feature", "trace_request", "get_method_calls",
+    "impact_graph", "find_callers", "trace_event_flow",
+})
 
 # Strings that indicate a tool returned nothing useful
 _EMPTY_RESULT_MARKERS = (
@@ -140,14 +150,30 @@ def _synthesis_prompt(
     file_context: str,
     history: list[dict],
 ) -> str:
-    # Build gathered context block
+    # Build gathered context — structural tools first, cross-tool deduplication applied
     context_blocks: list[str] = []
-    for i, tr in enumerate(tool_results, start=1):
-        header = f"[Gathered {i}: {tr['tool']}({tr['input']!r})]"
+    seen_fingerprints: set[str] = set()
+    sorted_results = sorted(
+        enumerate(tool_results, start=1),
+        key=lambda x: (0 if x[1]["tool"] in _STRUCTURAL_TOOLS else 1),
+    )
+    for i, tr in sorted_results:
         result = tr["result"]
         if len(result) > _MAX_TOOL_OUTPUT:
             result = result[:_MAX_TOOL_OUTPUT] + "\n… (truncated)"
-        context_blocks.append(f"{header}\n{result}")
+        # Deduplicate on paragraph boundaries — skip segments already seen from earlier tools
+        segments = result.split("\n\n")
+        unique_segments: list[str] = []
+        for seg in segments:
+            fp = seg.strip()[:_DEDUP_FINGERPRINT_LEN]
+            if fp and fp not in seen_fingerprints:
+                seen_fingerprints.add(fp)
+                unique_segments.append(seg)
+        if not unique_segments:
+            continue
+        signal_type = "STRUCTURAL" if tr["tool"] in _STRUCTURAL_TOOLS else "SEMANTIC"
+        header = f"[Gathered {i} — {signal_type}: {tr['tool']}({tr['input']!r})]"
+        context_blocks.append(f"{header}\n" + "\n\n".join(unique_segments))
 
     context_section = "\n\n".join(context_blocks) if context_blocks else "(no context gathered)"
 

@@ -27,7 +27,13 @@ class AgentCore:
             from .loop import AgentLoop
             from .tools import build_tools_map
 
-            llm = Ollama(model=self.rag.model, base_url=self.rag.base_url)
+            llm = Ollama(
+                model=self.rag.model,
+                base_url=self.rag.base_url,
+                num_ctx=16384,
+                temperature=0.15,
+                top_p=0.95,
+            )
             self._loop = AgentLoop(llm=llm, tools_map=build_tools_map())
             logger.info("AgentLoop initialised (model=%s)", self.rag.model)
         except Exception as exc:

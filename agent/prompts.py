@@ -26,6 +26,14 @@ What the gathered context may contain (from the codebase index):
 
 When generating code, use the exact package names, annotations, and patterns from context.
 When referencing a bean, always name its class and the project it belongs to.
+
+Context signal types: sections labelled [STRUCTURAL] come from graph traversal tools
+(describe_feature, trace_request, get_method_calls, find_callers, trace_event_flow) and
+contain verified class and method chains extracted directly from the codebase index.
+Sections labelled [SEMANTIC] come from vector search and may overlap or carry lower
+confidence. When STRUCTURAL and SEMANTIC sources conflict on a class name, method
+signature, or call chain, ALWAYS prefer the STRUCTURAL source. If only SEMANTIC sources
+are present, answer from those but note the absence of structural verification.
 """
 
 

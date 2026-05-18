@@ -45,7 +45,9 @@ def _search(query: str, project: str | None = None) -> str:
     store = VectorStore(os.getenv("CHROMA_PATH", "./vector_db"))
     q = embedder.embed_query(query)
     filters = {"project": project} if project else None
-    results = store.query(q, n_results=8, filters=filters)
+    # Retrieve 16 candidates then rerank to best 8 — improves chat-mode relevance
+    results = store.query(q, n_results=16, filters=filters)
+    results = _rerank_hits(results, query)[:8]
     return "\n".join(
         f"File: {r['metadata'].get('file_path', 'digest')}\nProject: {r['metadata'].get('project')}\n{r['content']}\n---"
         for r in results
@@ -183,7 +185,6 @@ def search_deep(query: str) -> str:
     embedder = Embedder()
     store = VectorStore(os.getenv("CHROMA_PATH", "./vector_db"))
 
-    # Build targeted variants (Change 3)
     variants = [
         query,
         f"service method implementation business logic: {query}",
@@ -192,6 +193,9 @@ def search_deep(query: str) -> str:
         f"configuration properties Feign Kafka event: {query}",
         f"Angular component service HTTP call: {query}",
         f"method call graph dependencies: {query}",
+        f"security authentication authorization @PreAuthorize JWT role: {query}",
+        f"exception error handling @ControllerAdvice fault tolerance: {query}",
+        f"Kafka event topic property configuration value: {query}",
     ]
     svc = re.search(r'ms-java-[\w-]+|module-java-[\w-]+', query)
     if svc:
@@ -201,7 +205,7 @@ def search_deep(query: str) -> str:
         variants.append(f"{cls.group(1)} method calls dependencies implementation")
 
     merged: dict[str, dict] = {}
-    for v in variants[:8]:
+    for v in variants[:10]:
         qvec = embedder.embed_query(v)
         for hit in store.query(qvec, n_results=12):
             key = _hit_key(hit)
