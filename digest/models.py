@@ -53,6 +53,7 @@ class FeignClientDigest(BaseModel):
     call_details: list[FeignCallDetail] = Field(default_factory=list)
     resolved_url: str = ""
     url_property_key: str = ""
+    oauth_scope: str = ""          # from @AuthorizationToken(scope=...) custom annotation
 
 
 class KafkaTopicConfig(BaseModel):

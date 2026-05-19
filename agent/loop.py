@@ -63,28 +63,25 @@ Answer the developer's question using ONLY the gathered context above.
 """,
 
     "deep": """\
-Provide a deep, evidence-backed answer. Cite [SOURCE N] for every specific claim.
+Provide a deep, evidence-backed answer using ONLY the gathered context. Cite [SOURCE N] for every specific claim.
 
-Structure your answer as:
-1. **Direct answer** — 2-3 sentences summarising what happens
-2. **Layer-by-layer trace** — walk each layer explicitly, citing sources:
-   - Angular: component → service → HTTP call (method, URL)
-   - Controller: class name, handler method, auth/roles
-   - Service: class, key methods, what they call (use method_call_graph data if available)
-   - Repository: class, relevant query methods or @Query SQL/JPQL
-   - Entity/DB: entity class, table, relevant fields
-   - Events: Kafka/RabbitMQ topics produced or consumed
-3. **Method call chain** — list the concrete call sequence step by step if method_call_graph data is present
-4. **Cross-service interactions** — Feign clients, external calls, downstream services triggered
-5. **Failure modes** — what can fail at each layer and what the impact would be
-6. **Security** — auth requirements, roles, JWT claims involved
-7. **Context gaps** — explicitly state which layers you could NOT find context for
+Structure your answer using these layers (only include layers that appear in the context):
+
+1. **Direct answer** — 2-3 sentences naming the exact classes involved
+2. **Angular layer** — component name → Angular service → HTTP call (method + URL). Note if call goes through a base service class (override loadMany/loadOne pattern).
+3. **Controller layer** — controller class, project, endpoint path, @EntitlementOrRoleBasedAuthorisation context if present, request/response DTOs
+4. **Strategy/Delegate layer** — if strategyFactory.getStrategy() pattern present, name the Delegate class that handles the request
+5. **Service implementation** — ServiceImpl class, its Lombok @RequiredArgsConstructor dependencies (private final fields), which Feign clients it calls (client-api.xxx.baseurl URL), @AuthorizationToken OAuth scope per downstream call, custom exception types
+6. **Repository/Database layer** — MongoRepository derived method or MongoTemplate Criteria query, @Document collection name (with resolved db.collection.suffix)
+7. **Kafka events** — topic from spring.kafka.consumer.topic property, EventModel event types dispatched, producer/consumer class names
+8. **Cross-service interactions** — all Feign clients called, their resolved URLs, downstream services triggered
+9. **Context gaps** — explicitly state which layers you could NOT find context for
 
 Rules:
-- Cite [SOURCE N] for every class name, method, or endpoint you reference
-- If method_call_graph data is in the sources, use it to trace the actual call chain
-- If a layer is missing from context, write "Context not retrieved for [layer]"
-- Never invent class names, method names, or endpoints not present in the sources\
+- Cite [SOURCE N] for every class name, method name, or endpoint you reference
+- If method_body or method_call_graph data is in the sources, use it to describe actual logic
+- If a layer is missing, write "Context not retrieved for [layer] — rephrase or reindex"
+- Never invent class names, method names, or property values not present in the sources\
 """,
 
     "generate": """\

@@ -134,25 +134,62 @@ class AngularParser:
         cls = re.search(r"export\s+class\s+([A-Za-z0-9_]+)", content)
         if not cls:
             return None
-        calls = []
-        # Extract HTTP calls — try to resolve URL from string literals and template strings
-        for m in re.finditer(
-            r"this\.http\.(get|post|put|delete|patch)\s*(?:<[^>]*>)?\s*\(([^)]{0,300})\)",
-            content,
-            re.DOTALL,
-        ):
-            method = m.group(1).upper()
-            args = m.group(2).strip()
-            url = self._resolve_url(args.split(",")[0].strip(), content)
-            response_type_m = re.search(r"<([A-Za-z0-9_\[\]<>]+)>", m.group(0))
-            response_type = response_type_m.group(1) if response_type_m else "unknown"
-            calls.append({"method": method, "url": url, "response_shape": response_type})
+        # Extract HTTP calls — checks this file first, then falls back to base class if none found
+        calls = self._extract_http_calls(content, file)
         return AngularServiceDigest(
             name=cls.group(1),
             file_path=str(file.relative_to(self.project_path)),
             http_calls=calls,
             injected_dependencies=self._constructor_types(content),
         )
+
+    def _extract_http_calls(self, content: str, file: Path) -> list[dict]:
+        """
+        Extract HTTP calls from content. If none found (service delegates to a base class
+        via 'override loadMany/loadOne/save'), scan the parent class file too.
+        """
+        calls = self._http_calls_from_text(content)
+        if calls:
+            return calls
+
+        # Check for base-class delegation: "extends SomeBaseService" or "super.loadMany"
+        # Find the parent class name and locate its file in the project
+        extends_m = re.search(r"extends\s+([A-Za-z0-9_]+)", content)
+        if extends_m:
+            parent_name = extends_m.group(1)
+            # Search for parent class file in the same project tree
+            for candidate in self.project_path.rglob(f"{parent_name}.ts"):
+                parent_content = self._read(candidate)
+                parent_calls = self._http_calls_from_text(parent_content)
+                if parent_calls:
+                    return parent_calls
+
+        # Also capture override method URLs directly (loadMany, loadOne, save, create, update)
+        # Pattern: super.loadMany(query, { method: HTTP_LOAD_METHODS.Post, ... })
+        for m in re.finditer(
+            r"(?:super|this)\.\w+\(\s*\w+\s*,\s*\{[^}]*method\s*:\s*(?:HTTP_LOAD_METHODS\.)?(\w+)",
+            content,
+        ):
+            method = m.group(1).upper().replace("POST", "POST").replace("GET", "GET")
+            calls.append({"method": method, "url": "[inherited-base-service]", "response_shape": "unknown"})
+
+        return calls
+
+    def _http_calls_from_text(self, text: str) -> list[dict]:
+        """Extract this.http.get/post/put/delete/patch calls from TypeScript source."""
+        calls = []
+        for m in re.finditer(
+            r"this\.http\.(get|post|put|delete|patch)\s*(?:<[^>]*>)?\s*\(([^)]{0,300})\)",
+            text,
+            re.DOTALL,
+        ):
+            method = m.group(1).upper()
+            args = m.group(2).strip()
+            url = self._resolve_url(args.split(",")[0].strip(), text)
+            response_type_m = re.search(r"<([A-Za-z0-9_\[\]<>]+)>", m.group(0))
+            response_type = response_type_m.group(1) if response_type_m else "unknown"
+            calls.append({"method": method, "url": url, "response_shape": response_type})
+        return calls
 
     def _parse_routes(self, file: Path) -> list[dict]:
         content = self._read(file)

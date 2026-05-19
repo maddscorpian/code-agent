@@ -235,7 +235,17 @@ class SpringBootParser:
                 if "FeignClient" in ann_names:
                     result["has_feign"] = True
 
-                # Constructor injection
+                # Lombok @RequiredArgsConstructor / @AllArgsConstructor:
+                # generates constructor from private final fields — no explicit constructor in source.
+                # Must be detected before reading cls_node.constructors (which will be empty).
+                if "RequiredArgsConstructor" in ann_names or "AllArgsConstructor" in ann_names:
+                    for field in (cls_node.fields or []):
+                        field_mods = set(field.modifiers or [])
+                        if "private" in field_mods and "final" in field_mods:
+                            if hasattr(field.type, "name"):
+                                result["dependencies"].append(field.type.name)
+
+                # Explicit constructor injection (non-Lombok)
                 for ctor in (cls_node.constructors or []):
                     for param in (ctor.parameters or []):
                         if hasattr(param.type, "name"):
@@ -393,6 +403,27 @@ class SpringBootParser:
             q = m.group(1).strip()
             if q:
                 queries.append(q[:300])
+
+        # MongoTemplate Criteria-based queries (no @Query annotation — captured from code)
+        # e.g. mongoTemplate.find(new Query(Criteria.where("entityId").is(x)), Foo.class)
+        for m in re.finditer(
+            r'(?:mongoTemplate|reactiveMongoTemplate)\s*\.\s*(find\w*|updateMulti|updateFirst|remove|count|exists|upsert)\s*\(',
+            text,
+        ):
+            op = m.group(1)
+            # Grab surrounding context (~400 chars) to extract Criteria chain
+            ctx = text[m.start(): m.start() + 400]
+            criteria_parts: list[str] = []
+            for crit in re.finditer(r'Criteria\.where\s*\(\s*"([^"]+)"\s*\)', ctx):
+                criteria_parts.append(crit.group(1))
+            for crit in re.finditer(r'\.and\s*\(\s*"([^"]+)"\s*\)', ctx):
+                criteria_parts.append(crit.group(1))
+            # Target class
+            cls_m = re.search(r',\s*([A-Z][A-Za-z0-9]+)\.class\s*\)', ctx)
+            target = cls_m.group(1) if cls_m else "?"
+            if criteria_parts:
+                where_clause = " AND ".join(f"{c} = ?" for c in criteria_parts)
+                queries.append(f"[mongoTemplate.{op}] {target} WHERE {where_clause}")
 
         # Derived Spring Data query methods (generated at runtime from method name)
         _DERIVED_PREFIXES = (
@@ -564,7 +595,20 @@ class SpringBootParser:
             full_path = self._join_paths(class_base, method_path)
             request_dto = self._extract_request_body_type(params)
             roles = self._extract_roles(context)
+            # Standard Spring Security annotations
             auth_required = bool(roles) or "@PreAuthorize" in context or "@Secured" in context
+            # Custom codebase annotations
+            if "@EntitlementOrRoleBasedAuthorisation" in context:
+                auth_required = True
+                entitlement_m = re.search(
+                    r'@EntitlementOrRoleBasedAuthorisation\s*\(\s*(?:context\s*=\s*)?["\']([^"\']+)["\']',
+                    context,
+                )
+                if entitlement_m:
+                    roles.append(f"entitlement:{entitlement_m.group(1)}")
+            if "@RestrictedAPIAccess" in context:
+                auth_required = True
+                roles.append("restricted-api")
             javadoc = self._extract_javadoc_before(text, ann_block[:30])
             rows.append(
                 EndpointDigest(
@@ -865,9 +909,21 @@ class SpringBootParser:
                 target = host_m.group(1)
         elif url_prop_key:
             parts = url_prop_key.rstrip(".").split(".")
-            if len(parts) >= 2 and parts[-1] in ("url", "host", "base", "uri", "endpoint"):
+            if len(parts) >= 2 and parts[-1] in ("url", "host", "base", "uri", "endpoint", "baseurl"):
                 parts = parts[:-1]
             target = "-".join(parts)
+
+        # Capture custom @AuthorizationToken OAuth annotation (codebase-specific)
+        # @AuthorizationToken(scope = "oauth.issuer.appointments.scope", clientId = "...", ...)
+        oauth_scope = ""
+        auth_token_m = re.search(
+            r'@AuthorizationToken\s*\(([\s\S]*?)\)',
+            text,
+        )
+        if auth_token_m:
+            scope_m = re.search(r'scope\s*=\s*["\']([^"\']+)["\']', auth_token_m.group(1))
+            if scope_m:
+                oauth_scope = self._properties.get(scope_m.group(1), scope_m.group(1))
 
         # Parse each method in the Feign interface with full request/response type info
         calls: list[str] = []
@@ -922,29 +978,52 @@ class SpringBootParser:
             call_details=call_details,
             resolved_url=resolved_url,
             url_property_key=url_prop_key,
+            oauth_scope=oauth_scope,
         )]
 
     def _build_properties_map(self) -> dict[str, str]:
-        """Scan application.properties / application.yml files to resolve property placeholders."""
+        """
+        Scan application.properties / application.yml files to resolve property placeholders.
+        Also follows spring.config.import to load additional property files imported by the service.
+        """
         props: dict[str, str] = {}
-        for file in self._iter_config_files():
+
+        def _load_file(file: Path) -> None:
             text = self._safe_read(file)
             if not text:
-                continue
+                return
             if file.suffix in (".yml", ".yaml"):
-                # Flat key: value lines (non-nested)
                 for pm in re.finditer(r"^([\w.\-]+)\s*:\s*([^\n#]+)", text, re.MULTILINE):
                     key = pm.group(1).strip()
                     val = pm.group(2).strip().strip("'\"")
                     if val and not val.startswith("{"):
                         props[key] = val
             else:
-                # .properties: key=value or key: value
                 for pm in re.finditer(r"^([\w.\-]+)\s*[=:]\s*([^\n#]+)", text, re.MULTILINE):
                     key = pm.group(1).strip()
                     val = pm.group(2).strip()
                     if val:
                         props[key] = val
+
+        # Load primary config files first
+        primary_files = list(self._iter_config_files())
+        for file in primary_files:
+            _load_file(file)
+
+        # Follow spring.config.import: optional:classpath:filename.properties
+        # Collect referenced files and load them from the resources directory
+        resources_dirs = list(self.project_path.rglob("src/main/resources"))
+        import_value = props.get("spring.config.import", "")
+        if import_value:
+            for entry in import_value.split(","):
+                entry = entry.strip().removeprefix("optional:classpath:").strip()
+                if not entry:
+                    continue
+                for res_dir in resources_dirs:
+                    candidate = res_dir / entry
+                    if candidate.exists() and candidate not in primary_files:
+                        _load_file(candidate)
+
         return props
 
     def _parse_events(self, text: str) -> tuple[set[str], set[str]]:

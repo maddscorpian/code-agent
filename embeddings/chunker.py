@@ -75,7 +75,12 @@ class Chunker:
 
             # Feign clients
             for i, fc in enumerate(data.get("feign_clients", [])):
-                content = f"Feign {fc.get('client_name')} target={fc.get('target_service')}\ncalls={fc.get('calls')}"
+                content = f"Feign {fc.get('client_name')} target={fc.get('target_service')}"
+                if fc.get("resolved_url"):
+                    content += f"\nresolved_url={fc['resolved_url']}"
+                if fc.get("oauth_scope"):
+                    content += f"\noauth_scope={fc['oauth_scope']}"
+                content += f"\ncalls={fc.get('calls')}"
                 rows.append(self._chunk_dict(project, str(file), 2000 + i, content, {
                     "source": "digest", "project": project, "type": "feign",
                     "name": fc.get("client_name", "feign"),
