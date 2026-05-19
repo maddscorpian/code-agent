@@ -43,9 +43,26 @@ _EMPTY_RESULT_MARKERS = (
 )
 
 _THIN_CONTEXT_WARNING = """\
-[CONTEXT WARNING: The codebase index returned very little or no information for this question.
-Do NOT answer from general knowledge. State clearly which specific things were not found in the
-index and stop. Do not guess, infer, or describe how this type of system typically works.]
+[CRITICAL — INDEX RETURNED NO USEFUL DATA FOR THIS QUESTION]
+
+The search tools found nothing relevant. You MUST output ONLY the following and then STOP:
+
+"No indexed information found for [repeat the module/class/feature name from the question].
+
+The codebase index did not return relevant context for this query.
+Possible reasons:
+  - This module or class name may not be indexed (check spelling or try a different name)
+  - The index may be out of date — rebuild with: POST /reindex
+
+To get a real answer, try rephrasing with:
+  - A specific Angular module name that is indexed
+  - A Spring service class name (e.g. SomeServiceImpl)
+  - A REST endpoint path (e.g. /api/v1/something)
+
+I cannot describe or guess how this would work — I have no indexed evidence for this query."
+
+DO NOT write class names. DO NOT write architecture layers. DO NOT describe how this might work.
+STOP after the message above.
 """
 
 
@@ -56,10 +73,17 @@ index and stop. Do not guess, infer, or describe how this type of system typical
 _SYNTHESIS_SUFFIX = {
     "chat": """\
 Answer the developer's question using ONLY the gathered context above.
-- Reference actual class names, file paths, and method names exactly as they appear in the context.
-- Do not use general knowledge about Angular or Spring Boot to fill in missing details.
-- If a specific class, method, endpoint, or field is not in the gathered context, say it was not found in the index — do not guess.
-- If the context is thin or off-topic, say so and suggest reindexing or rephrasing.
+
+Before writing anything: scan the [Gathered N] blocks. If none contain relevant information
+for the class/module/feature asked about, respond with:
+  "No indexed information found for [name from question]. Try reindexing or rephrasing."
+and STOP — do not describe how it might work.
+
+Rules:
+- Every class/method/endpoint name you write MUST appear verbatim in a [Gathered N] block
+- If a detail is not in the context: write "not found in index" — never guess
+- Forbidden words (mean you are hallucinating): likely, might, could, probably, assuming,
+  typically, usually, generally, standard, "would be", "should be", "appears to"
 
 For API / endpoint documentation questions, format your answer as:
 
@@ -86,55 +110,60 @@ For MongoDB collection / data model questions:
 """,
 
     "deep": """\
-Provide a deep, evidence-backed answer using ONLY the gathered context. Cite [SOURCE N] for every specific claim.
+STEP 1 — EVIDENCE CHECK (do this before writing anything):
+Scan every [Gathered N — ...] block above for class names, method names, or endpoints
+that are directly related to the question.
 
-Structure your answer using these layers (only include layers that appear in the context):
+If NONE of the gathered blocks contain relevant information for the module/feature/class
+asked about, output EXACTLY this and then STOP — do not write any layers:
 
-1. **Direct answer** — 2-3 sentences naming the exact classes involved
+  "No indexed information found for [name from the question].
+   The index returned no matching classes, endpoints, or services.
+   Try reindexing (POST /reindex) or rephrase using a specific class or endpoint name."
 
-2. **Angular layer**
-   - Component: name, file path, injected services
-   - Angular service: HTTP method + URL (resolved via override apiItemsUrl() or API_SLUGS constant)
-   - Note if call goes through a base service class (override loadMany/loadOne/save pattern)
+STEP 2 — FORBIDDEN WORDS (self-check before every sentence):
+These words mean you are guessing from training knowledge, not the index:
+  likely · might · could · probably · assuming · assumed · expected · typical · typically
+  usually · generally · standard · "in a standard" · "common pattern" · "would be" · "should be"
+  "appears to" · "seems to" · "perhaps" · "presumably"
 
-3. **Controller layer**
-   - Controller class name, project (e.g. ms-java-appointments)
-   - Endpoint: `[METHOD] /path`
-   - Auth: @EntitlementOrRoleBasedAuthorisation context if present, or "no auth annotation found"
-   - Request DTO → Response DTO (with key fields if available in context)
+If you catch yourself about to write any forbidden word: STOP.
+Either cite the actual source text with [SOURCE N], or write "Not found in index".
 
-4. **Strategy/Delegate layer** (if applicable)
-   - strategyFactory.getStrategy() call and which Delegate class handles the request
+STEP 3 — WRITE LAYERS (only if Step 1 found relevant evidence):
+For each layer, you MUST have a [Gathered N] block that explicitly names the class,
+method, or value. If you cannot cite a source, write "Not found in index" for that layer.
 
-5. **Service implementation**
-   - ServiceImpl class (Lombok @RequiredArgsConstructor — list private final field dependencies)
-   - Method logic summary from method_body if available in sources
+Structure (only include layers that appear in the gathered context above):
 
-6. **External service calls** (Feign downstream)
-   For each Feign client called by the service:
-   - Client name → resolved URL (client-api.<name>.baseurl from application.properties)
-   - Endpoint called: `[METHOD] /path`
-   - Request DTO fields sent → Response DTO fields received
-   - OAuth scope: @AuthorizationToken scope value
-   - Classification: [internal] if target is another indexed microservice, [external] if third-party
+1. Direct answer — name the exact classes and project found in the sources (2-3 sentences max)
 
-7. **Repository / Database layer**
-   - Repository class: MongoRepository derived method OR MongoTemplate Criteria.where() chain
-   - Collection: @Document name (with db.collection.suffix resolved)
-   - Query logic from method body if available
+2. Angular layer (only if a [Gathered N] block names this component/service)
+   - Component name and file path from context
+   - Angular service: HTTP method + URL exactly as shown in sources
+   - Base class pattern if mentioned in sources
 
-8. **Kafka events** (if applicable)
-   - Topic name from spring.kafka.consumer.topic property value
-   - EventModel event types dispatched (if switch/dispatch pattern visible in sources)
-   - Producer or consumer class name
+3. Controller layer (only if a [Gathered N] block names this controller and endpoint)
+   - Controller class name and project exactly as in sources
+   - Endpoint path exactly as in sources
+   - Auth annotation context exactly as in sources
+   - Request/Response DTO names exactly as in sources
 
-9. **Context gaps** — explicitly list which layers you could NOT find context for
+4. Strategy/Delegate layer (only if strategyFactory or Delegate class appears in sources)
 
-Rules:
-- Cite [SOURCE N] for every class name, method name, or endpoint you reference
-- Use method_body / method_call_graph from sources to describe actual logic — not generalizations
-- If a layer is missing from context: write "Not retrieved — rephrase or add [layer] keywords"
-- Never invent class names, method names, property values, or DTO fields not in the sources\
+5. Service implementation (only if ServiceImpl class appears in sources)
+   - Class name and private final field dependencies exactly as in sources
+   - Method logic from method_body if present in sources — quote it, don't paraphrase
+
+6. External service calls (only if Feign client names appear in sources)
+   - Client class name → resolved URL → endpoint → request/response DTO — all from sources
+
+7. Repository / Database (only if repository class or @Document collection appears in sources)
+   - Class name, query method, collection name — all from sources
+
+8. Kafka events (only if topic name or producer/consumer class appears in sources)
+
+9. What was not found — list which layers had NO evidence in the gathered context\
 """,
 
     "generate": """\
@@ -222,6 +251,30 @@ def _is_context_thin(tool_results: list[dict]) -> bool:
     return useful_chars < 200
 
 
+_STRUCTURAL_MISS_WARNING = """\
+[NOTE: The graph traversal tools (describe_feature / trace_request / get_method_calls)
+returned no specific information about the class or module asked about.
+The context below comes from semantic search only and may be off-topic.
+Apply the EVIDENCE CHECK strictly: if no [Gathered N] block explicitly names the
+class/module from the question, output the "No indexed information found" message and stop.]
+"""
+
+
+def _has_structural_hits(tool_results: list[dict]) -> bool:
+    """Return True if at least one structural tool returned meaningful content."""
+    for tr in tool_results:
+        if tr["tool"] not in _STRUCTURAL_TOOLS:
+            continue
+        result = tr["result"].strip().lower()
+        if not result:
+            continue
+        if any(result.startswith(m) for m in _EMPTY_RESULT_MARKERS):
+            continue
+        if len(result) > 120:
+            return True
+    return False
+
+
 def _synthesis_prompt(
     question: str,
     mode: str,
@@ -256,7 +309,14 @@ def _synthesis_prompt(
 
     context_section = "\n\n".join(context_blocks) if context_blocks else "(no context gathered)"
 
-    thin_warning = _THIN_CONTEXT_WARNING if _is_context_thin(tool_results) else ""
+    is_thin = _is_context_thin(tool_results)
+    thin_warning = _THIN_CONTEXT_WARNING if is_thin else ""
+    # For deep mode: if structural tools returned nothing, add a softer structural-miss note
+    structural_warning = (
+        _STRUCTURAL_MISS_WARNING
+        if (not is_thin and mode == "deep" and not _has_structural_hits(tool_results))
+        else ""
+    )
     file_section = f"\nCurrently open file:\n{file_context}\n" if file_context else ""
     history_block = format_history(history)
     mode_suffix = _SYNTHESIS_SUFFIX.get(mode, _SYNTHESIS_SUFFIX["chat"])
@@ -264,6 +324,7 @@ def _synthesis_prompt(
     return (
         f"{SYSTEM_PROMPT_BASE}\n\n"
         f"{thin_warning}"
+        f"{structural_warning}"
         f"Gathered context from codebase tools:\n{context_section}\n"
         f"{file_section}"
         f"{history_block}"
