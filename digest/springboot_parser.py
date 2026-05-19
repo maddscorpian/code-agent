@@ -963,12 +963,16 @@ class SpringBootParser:
             # Extract @PathVariable names
             path_params = re.findall(r"@PathVariable(?:\([^)]*\))?\s+(?:[\w<>]+\s+)?(\w+)", params)
 
+            # Extract @RequestParam names (query parameters)
+            request_params = re.findall(r"@RequestParam(?:\([^)]*\))?\s+(?:[\w<>]+\s+)?(\w+)", params)
+
             call_details.append(FeignCallDetail(
                 method=http_method,
                 path=path,
                 request_dto=req_dto,
                 response_dto=resp_dto if resp_dto not in ("void", "Void", "Object") else "",
                 path_params=path_params,
+                request_params=request_params,
             ))
 
         return [FeignClientDigest(

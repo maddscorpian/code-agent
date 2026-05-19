@@ -46,7 +46,7 @@ Available tools (name: description — input format):
   get_auth_flow         : JWT auth flow summary — (empty string)
   read_source_file      : read raw source file — absolute file path
   graph_summary         : knowledge graph overview statistics — (empty string)
-  get_external_calls    : list Feign downstream calls with resolved URLs for a service — service name or "" for all
+  get_external_calls    : full Feign downstream call details — resolved URLs, HTTP methods, request/response DTOs (with fields), path params, query params, OAuth scopes, internal vs external classification — service name or "" for all
   get_dto_schema        : field structure of a request/response DTO class — DTO class name (e.g. "OrderRequest")
   trace_event_flow      : full Kafka event flow — REST publisher → topic → consumers — topic name or service name\
 """

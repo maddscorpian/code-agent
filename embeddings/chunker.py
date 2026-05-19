@@ -73,7 +73,7 @@ class Chunker:
                     "name": ent.get("name", "entity"),
                 }))
 
-            # Feign clients
+            # Feign clients — include full call details with request/response types
             for i, fc in enumerate(data.get("feign_clients", [])):
                 content = f"Feign {fc.get('client_name')} target={fc.get('target_service')}"
                 if fc.get("resolved_url"):
@@ -82,7 +82,22 @@ class Chunker:
                     content += f"\nurl_property_key={fc['url_property_key']} (check application.properties)"
                 if fc.get("oauth_scope"):
                     content += f"\noauth_scope={fc['oauth_scope']}"
-                content += f"\ncalls={fc.get('calls')}"
+                call_details = fc.get("call_details", [])
+                if call_details:
+                    content += "\nendpoints:"
+                    for cd in call_details:
+                        line = f"  {cd.get('method','GET')} {cd.get('path','')}"
+                        if cd.get("request_dto"):
+                            line += f"  request={cd['request_dto']}"
+                        if cd.get("response_dto"):
+                            line += f"  response={cd['response_dto']}"
+                        if cd.get("path_params"):
+                            line += f"  pathParams={cd['path_params']}"
+                        if cd.get("request_params"):
+                            line += f"  queryParams={cd['request_params']}"
+                        content += f"\n{line}"
+                else:
+                    content += f"\ncalls={fc.get('calls')}"
                 rows.append(self._chunk_dict(project, str(file), 2000 + i, content, {
                     "source": "digest", "project": project, "type": "feign",
                     "name": fc.get("client_name", "feign"),

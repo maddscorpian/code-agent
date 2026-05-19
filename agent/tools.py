@@ -501,10 +501,55 @@ def get_dto_schema(dto_name: str) -> str:
 
 def get_external_calls(service_filter: str = "") -> str:
     """
-    Return all Feign client downstream calls for a service (or all services).
-    Shows resolved URLs, property keys, and the mapped endpoint calls.
-    Input: service name (e.g. 'ms-java-order') or empty string for all.
+    Return all Feign client downstream calls with full request/response details.
+    Shows resolved URLs, HTTP methods, paths, request DTOs (with fields), response DTOs,
+    path params, query params, and OAuth scopes.
+    Marks calls as [internal] (to another indexed microservice) or [external] (third-party API).
+    Input: service name (e.g. 'ms-java-order') or empty string for all services.
     """
+    # Build DTO schema lookup across all digests: {type_name: [field descriptions]}
+    dto_schemas: dict[str, list[str]] = {}
+    for df in DIGESTS.glob("*.digest.json"):
+        if df.name == "master.digest.json":
+            continue
+        try:
+            ddata = json.loads(df.read_text(encoding="utf-8"))
+        except Exception:
+            continue
+        for dto in ddata.get("dto_schemas", []):
+            name = dto.get("name", "")
+            if name and name not in dto_schemas:
+                fields = [
+                    f"{fld['name']}: {fld['type']}"
+                    + (" [required]" if fld.get("required") else "")
+                    + (f" @JsonProperty({fld['json_property']!r})" if fld.get("json_property") else "")
+                    for fld in dto.get("fields", [])[:8]
+                ]
+                if fields:
+                    dto_schemas[name] = fields
+
+    # Collect all known internal project names for internal/external classification
+    known_projects: set[str] = set()
+    for df in DIGESTS.glob("*.digest.json"):
+        if df.name == "master.digest.json":
+            continue
+        try:
+            ddata = json.loads(df.read_text(encoding="utf-8"))
+            p = ddata.get("project", "")
+            if p:
+                known_projects.add(p.lower())
+        except Exception:
+            continue
+
+    def _is_internal(target: str) -> bool:
+        tl = target.lower()
+        return any(tl in p or p in tl for p in known_projects)
+
+    def _dto_fields(type_name: str) -> list[str]:
+        if not type_name:
+            return []
+        return dto_schemas.get(type_name, [])
+
     results: list[str] = []
     for f in DIGESTS.glob("*.digest.json"):
         if f.name == "master.digest.json":
@@ -519,16 +564,56 @@ def get_external_calls(service_filter: str = "") -> str:
         feigns = data.get("feign_clients", [])
         if not feigns:
             continue
-        lines = [f"[{project}] Feign clients:"]
+
+        lines = [f"[{project}] Downstream Feign clients:"]
         for fc in feigns:
-            url = fc.get("resolved_url", "") or "(unresolved)"
-            prop = fc.get("url_property_key", "")
-            prop_str = f" from ${{{prop}}}" if prop else ""
-            lines.append(f"  {fc['client_name']} → {fc.get('target_service','')}  url={url}{prop_str}")
-            for call in fc.get("calls", [])[:8]:
-                lines.append(f"    {call}")
+            target = fc.get("target_service", "unknown")
+            tag = "[internal]" if _is_internal(target) else "[external]"
+            url = fc.get("resolved_url", "") or f"${{{fc.get('url_property_key', 'unresolved')}}}"
+            scope = fc.get("oauth_scope", "")
+            scope_str = f"  oauth_scope={scope}" if scope else ""
+            lines.append(f"")
+            lines.append(f"  {fc['client_name']} {tag}")
+            lines.append(f"    target : {target}")
+            lines.append(f"    baseUrl : {url}{scope_str}")
+
+            # Show each method with full request/response detail
+            for cd in fc.get("call_details", []):
+                method = cd.get("method", "GET")
+                path = cd.get("path", "")
+                req_dto = cd.get("request_dto", "")
+                resp_dto = cd.get("response_dto", "")
+                path_params = cd.get("path_params", [])
+                req_params = cd.get("request_params", [])
+
+                lines.append(f"")
+                lines.append(f"    {method} {path}")
+                if path_params:
+                    lines.append(f"      pathParams  : {', '.join(path_params)}")
+                if req_params:
+                    lines.append(f"      queryParams : {', '.join(req_params)}")
+                if req_dto:
+                    lines.append(f"      request     : {req_dto}")
+                    fields = _dto_fields(req_dto)
+                    for fld in fields:
+                        lines.append(f"        - {fld}")
+                if resp_dto:
+                    lines.append(f"      response    : {resp_dto}")
+                    fields = _dto_fields(resp_dto)
+                    for fld in fields:
+                        lines.append(f"        - {fld}")
+
+            # Fallback to simple call strings if no call_details
+            if not fc.get("call_details"):
+                for call in fc.get("calls", [])[:8]:
+                    lines.append(f"    {call}")
+
         results.append("\n".join(lines))
-    return "\n\n".join(results) if results else f"No Feign clients found for '{service_filter}'"
+
+    return "\n\n".join(results) if results else (
+        f"No Feign clients found for '{service_filter}'. "
+        "Run /reindex or check that the service name matches a project in projects.yaml."
+    )
 
 
 # ------------------------------------------------------------------

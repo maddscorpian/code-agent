@@ -41,9 +41,10 @@ class DtoDigest(BaseModel):
 class FeignCallDetail(BaseModel):
     method: str
     path: str
-    request_dto: str = ""         # @RequestBody type
-    response_dto: str = ""        # unwrapped return type
+    request_dto: str = ""                    # @RequestBody type
+    response_dto: str = ""                   # unwrapped return type
     path_params: list[str] = Field(default_factory=list)
+    request_params: list[str] = Field(default_factory=list)   # @RequestParam names
 
 
 class FeignClientDigest(BaseModel):
