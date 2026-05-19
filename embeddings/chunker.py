@@ -78,6 +78,8 @@ class Chunker:
                 content = f"Feign {fc.get('client_name')} target={fc.get('target_service')}"
                 if fc.get("resolved_url"):
                     content += f"\nresolved_url={fc['resolved_url']}"
+                elif fc.get("url_property_key"):
+                    content += f"\nurl_property_key={fc['url_property_key']} (check application.properties)"
                 if fc.get("oauth_scope"):
                     content += f"\noauth_scope={fc['oauth_scope']}"
                 content += f"\ncalls={fc.get('calls')}"

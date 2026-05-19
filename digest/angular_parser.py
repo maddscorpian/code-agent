@@ -152,8 +152,7 @@ class AngularParser:
         if calls:
             return calls
 
-        # Check for base-class delegation: "extends SomeBaseService" or "super.loadMany"
-        # Find the parent class name and locate its file in the project
+        # Check for base-class delegation: "extends SomeBaseService"
         extends_m = re.search(r"extends\s+([A-Za-z0-9_]+)", content)
         if extends_m:
             parent_name = extends_m.group(1)
@@ -164,16 +163,55 @@ class AngularParser:
                 if parent_calls:
                     return parent_calls
 
-        # Also capture override method URLs directly (loadMany, loadOne, save, create, update)
-        # Pattern: super.loadMany(query, { method: HTTP_LOAD_METHODS.Post, ... })
-        for m in re.finditer(
-            r"(?:super|this)\.\w+\(\s*\w+\s*,\s*\{[^}]*method\s*:\s*(?:HTTP_LOAD_METHODS\.)?(\w+)",
+        # Base-class URL pattern: try to resolve the actual URL from override / constructor
+        # 1. override apiItemsUrl() { return 'v1/appointments/...'; }
+        api_url_override = re.search(
+            r"override\s+apiItemsUrl\s*\(\s*\)[^{]*\{[^}]*return\s+[`'\"]([^`'\"]+)[`'\"]",
             content,
-        ):
-            method = m.group(1).upper().replace("POST", "POST").replace("GET", "GET")
-            calls.append({"method": method, "url": "[inherited-base-service]", "response_shape": "unknown"})
+        )
+        if api_url_override:
+            resolved_url = api_url_override.group(1)
+            # Detect HTTP method from super.loadMany / super.save patterns
+            for m in re.finditer(
+                r"(?:super|this)\.\w+\([^)]*method\s*:\s*(?:HTTP_LOAD_METHODS\.)?(\w+)", content
+            ):
+                calls.append({"method": m.group(1).upper(), "url": resolved_url, "response_shape": "unknown"})
+            if not calls:
+                calls.append({"method": "GET", "url": resolved_url, "response_shape": "unknown"})
+            return calls
+
+        # 2. super(httpService, injector, API_SLUGS.CONSTANT) → resolve slug → v1/{slug}
+        slug_m = re.search(r"super\s*\([^)]*API_SLUGS\.(\w+)", content)
+        if slug_m:
+            slug = self._resolve_api_slug(slug_m.group(1))
+            resolved_url = f"v1/{slug}"
+            for m in re.finditer(
+                r"(?:super|this)\.\w+\([^)]*method\s*:\s*(?:HTTP_LOAD_METHODS\.)?(\w+)", content
+            ):
+                calls.append({"method": m.group(1).upper(), "url": resolved_url, "response_shape": "unknown"})
+            if not calls:
+                calls.append({"method": "GET", "url": resolved_url, "response_shape": "unknown"})
+            return calls
+
+        # 3. super(httpService, injector, 'literal-slug') as fallback
+        literal_slug_m = re.search(r"super\s*\([^)]*['\"]([a-z][a-z0-9\-_/]+)['\"]", content)
+        if literal_slug_m:
+            slug = literal_slug_m.group(1)
+            if "/" in slug or len(slug) > 2:   # likely a URL slug, not a config value
+                calls.append({"method": "GET", "url": f"v1/{slug}", "response_shape": "unknown"})
+                return calls
 
         return calls
+
+    def _resolve_api_slug(self, const_name: str) -> str:
+        """Resolve API_SLUGS.CONST_NAME from *.constants.ts files in the project."""
+        for f in self.project_path.rglob("*.constants.ts"):
+            content = self._read(f)
+            m = re.search(rf'\b{re.escape(const_name)}\s*[=:]\s*["\']([^"\']+)["\']', content)
+            if m:
+                return m.group(1)
+        # Fallback: APPOINTMENTS → appointments
+        return const_name.lower()
 
     def _http_calls_from_text(self, text: str) -> list[dict]:
         """Extract this.http.get/post/put/delete/patch calls from TypeScript source."""

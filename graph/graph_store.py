@@ -358,6 +358,41 @@ class GraphStore:
                 for call in http_calls[:3]:
                     lines.append(f"    → {call.get('method', 'GET')} {call.get('url', '')}")
 
+        # Spring Endpoints — traverse http_call / inferred_http_call edges from angular services
+        seen_ep_ids: set[str] = set()
+        endpoint_nodes: list[dict] = []
+        for svc_node in ang_svc_nodes:
+            for edge in self._out.get(svc_node["id"], []):
+                if edge["type"] in ("http_call", "inferred_http_call"):
+                    ep = self._nodes.get(edge["to"])
+                    if ep and ep.get("type") == "endpoint" and ep["id"] not in seen_ep_ids:
+                        seen_ep_ids.add(ep["id"])
+                        endpoint_nodes.append(ep)
+        if endpoint_nodes:
+            lines.append("\n[Spring Endpoints]")
+            for ep in endpoint_nodes[:8]:
+                auth_str = ""
+                if ep.get("auth_required"):
+                    roles = ep.get("roles", [])
+                    auth_str = f"  [AUTH: {', '.join(roles) if roles else 'required'}]"
+                else:
+                    auth_str = "  [AUTH: public]"
+                ctrl = ep.get("controller", "")
+                ep_project = ep.get("project", "")
+                req = ep.get("request_dto", "")
+                resp = ep.get("response_dto", "")
+                dto_str = ""
+                if req:
+                    dto_str += f"  request={req}"
+                if resp:
+                    dto_str += f"  response={resp}"
+                lines.append(
+                    f"  {ep.get('method','GET')} {ep.get('path','')} "
+                    f"[{ctrl}, {ep_project}]{auth_str}"
+                )
+                if dto_str:
+                    lines.append(f"    {dto_str.strip()}")
+
         # Spring backend (feature_calls edges)
         spring_svc_nodes = [
             self._nodes[e["to"]]

@@ -65,8 +65,8 @@ PLANNER_PROMPT = """{system}
 Mode: {mode}
 
 Planning guidelines:
-- "how does [feature/module/flow] work" → describe_feature (strip Module/Component suffix, e.g. BookAppointmentSlotModule → "Book Appointment Slot") + search_deep
-- "end to end" / "UI to API" / "frontend to backend" / "from UI" questions → describe_feature (extract the feature/module name) + search_deep
+- "how does [feature/module/flow] work" → describe_feature (strip Module/Component suffix, e.g. BookAppointmentSlotModule → "Book Appointment Slot") + search_deep + get_method_calls (on main ServiceImpl)
+- "end to end" / "UI to API" / "frontend to backend" / "from UI" / "UI to API" / "repositories" questions → describe_feature (extract the feature/module name) + get_method_calls (ServiceImpl) + search_deep("controller endpoints {feature}")
 - "what can a user do" / "what features exist" → list_features + search_deep
 - deep/architecture/flow questions → search_deep + trace_request + get_method_calls (for key service classes)
 - "how does X work" questions      → trace_request + search_deep + get_method_calls (on the main service)
@@ -207,13 +207,16 @@ def _default_plan(question: str, mode: str) -> PlanResult:
         calls.append(ToolCall("search_deep", question))
 
     elif any(phrase in q for phrase in _FEATURE_FLOW_WORDS):
-        # Feature/module end-to-end flow question — try describe_feature first
+        # Feature/module end-to-end flow question — describe_feature + controller context
         subject = _extract_subject(question)  # e.g. "BookAppointmentSlotModule"
         if subject:
             calls.append(ToolCall("describe_feature", subject))
         path = _extract_path(question)
         if path:
             calls.append(ToolCall("trace_request", path))
+        # Always add a targeted controller search for end-to-end questions
+        endpoint_query = f"controller endpoint handler {subject or question[:40]}"
+        calls.append(ToolCall("search_deep", endpoint_query))
         calls.append(ToolCall("search_deep", question))
         if subject and not path:
             calls.append(ToolCall("get_method_calls", subject))
