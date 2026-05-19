@@ -8,184 +8,233 @@
     <script src="https://cdnjs.cloudflare.com/ajax/libs/marked/9.1.6/marked.min.js"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js"></script>
     <style>
-      body { font-family: Inter, Arial, sans-serif; margin: 0; background: #0f172a; color: #e2e8f0; }
+      :root {
+        --font-sans: -apple-system, BlinkMacSystemFont, "SF Pro Text", "Helvetica Neue", Arial, sans-serif;
+        --font-mono: "SF Mono", ui-monospace, "Cascadia Code", Consolas, monospace;
+        --bg: #0f172a;
+        --surface: #111827;
+        --surface2: #1a2233;
+        --border: #2a3a52;
+        --border2: #1e2d42;
+        --text: #d4dce8;
+        --text-dim: #7a8fa8;
+        --text-muted: #4e6179;
+        --accent: #4d8ef0;
+        --accent2: #3d7de0;
+      }
+      * { box-sizing: border-box; }
+      body { font-family: var(--font-sans); margin: 0; background: var(--bg); color: var(--text); font-size: 14px; -webkit-font-smoothing: antialiased; }
       .wrap { max-width: 980px; margin: 0 auto; padding: 16px; }
-      h1 { font-size: 20px; margin: 0 0 4px; }
-      .sub { color: #94a3b8; margin-bottom: 16px; }
-      .panel { border: 1px solid #334155; border-radius: 10px; background: #111827; }
-      .toolbar { padding: 10px; border-bottom: 1px solid #334155; display: flex; gap: 8px; align-items: center; }
-      .messages { height: 60vh; overflow: auto; padding: 16px; display: flex; flex-direction: column; gap: 12px; }
-      .msg { padding: 12px 16px; border-radius: 10px; line-height: 1.6; font-size: 14px; max-width: 100%; word-break: break-word; }
-      .user { background: #1d4ed8; align-self: flex-end; max-width: 80%; white-space: pre-wrap; }
+      h1 { font-size: 19px; margin: 0 0 3px; font-weight: 500; letter-spacing: -0.3px; }
+      .sub { color: var(--text-dim); margin-bottom: 14px; font-size: 13px; }
+      .panel { border: 1px solid var(--border); border-radius: 12px; background: var(--surface); overflow: hidden; }
+      .toolbar { padding: 9px 12px; border-bottom: 1px solid var(--border2); display: flex; gap: 8px; align-items: center; background: #0d1625; }
+      .messages { height: 60vh; overflow-y: auto; padding: 16px; display: flex; flex-direction: column; gap: 14px; }
+      .msg { padding: 12px 16px; border-radius: 10px; line-height: 1.65; max-width: 100%; word-break: break-word; }
+      .user { background: #1a3a6b; color: #ccd9ec; align-self: flex-end; max-width: 80%; white-space: pre-wrap; font-size: 14px; }
       .ai {
-        background: #1e293b;
-        border: 1px solid #334155;
+        background: var(--surface2);
+        border: 1px solid var(--border2);
         align-self: flex-start;
         width: 100%;
-        color: #e2e8f0;
+        color: var(--text);
         position: relative;
       }
       .copy-response-btn {
-        position: absolute;
-        top: 8px;
-        right: 8px;
-        font-size: 11px;
-        padding: 3px 9px;
-        border-radius: 4px;
-        border: 1px solid #334155;
-        background: #0f172a;
-        color: #64748b;
-        cursor: pointer;
-        opacity: 0;
-        transition: opacity 0.15s, color 0.15s;
+        position: absolute; top: 8px; right: 8px;
+        font-family: var(--font-sans); font-size: 11px; padding: 3px 9px;
+        border-radius: 5px; border: 1px solid var(--border);
+        background: var(--surface); color: var(--text-muted);
+        cursor: pointer; opacity: 0; transition: opacity 0.15s;
         white-space: nowrap;
       }
       .ai:hover .copy-response-btn { opacity: 1; }
-      .copy-response-btn:hover { color: #e2e8f0; border-color: #475569; background: #1e293b; }
-      .copy-response-btn.copied { color: #4ade80; border-color: #166534; opacity: 1; }
+      .copy-response-btn:hover { color: var(--text); border-color: #3a5070; }
+      .copy-response-btn.copied { color: #5abf80; border-color: #2a5040; opacity: 1; }
+
+      /* Plan strip */
       .plan-strip {
-        font-size: 11px; color: #64748b; margin-bottom: 8px;
-        padding: 4px 8px; background: #0f172a; border-radius: 4px;
-        border-left: 2px solid #334155;
+        font-size: 11px; color: var(--text-muted); margin-bottom: 10px;
+        padding: 5px 10px; background: #0d1625; border-radius: 5px;
+        border-left: 2px solid #2a3a52;
       }
-      .plan-strip strong { color: #475569; }
       .plan-strip .tool-tag {
-        display: inline-block; background: #1e293b; border: 1px solid #334155;
-        border-radius: 3px; padding: 0 4px; margin: 1px 2px; color: #60a5fa;
+        display: inline-block; background: #152030; border: 1px solid var(--border2);
+        border-radius: 3px; padding: 0 5px; margin: 1px 2px; color: var(--accent);
+        font-size: 11px;
       }
-      .thinking { color: #475569; font-style: italic; font-size: 13px; }
-      /* markdown content inside AI messages */
-      .ai p { margin: 0 0 10px; }
+      .thinking { color: var(--text-muted); font-style: italic; font-size: 13px; }
+
+      /* ── AI response typography ───────────────────────────────── */
+      .ai p { margin: 0 0 9px; }
       .ai p:last-child { margin-bottom: 0; }
-      .ai h1,.ai h2,.ai h3,.ai h4 { margin: 14px 0 6px; color: #f1f5f9; font-weight: 600; }
-      .ai h1 { font-size: 18px; } .ai h2 { font-size: 16px; } .ai h3 { font-size: 14px; }
-      .ai ul, .ai ol { margin: 6px 0 10px 20px; padding: 0; }
-      .ai li { margin: 4px 0; }
+
+      /* Headings — lighter weight, readable hierarchy */
+      .ai h1, .ai h2, .ai h3, .ai h4 {
+        font-family: var(--font-sans);
+        font-weight: 500;
+        color: #b8c8de;
+        margin: 16px 0 5px;
+        letter-spacing: -0.2px;
+      }
+      .ai h1 { font-size: 17px; border-bottom: 1px solid var(--border2); padding-bottom: 5px; margin-top: 4px; }
+      .ai h2 { font-size: 15px; }
+      .ai h3 { font-size: 14px; color: #a0b4cc; }
+      .ai h4 { font-size: 13px; color: #8099b4; }
+
+      /* Lists */
+      .ai ul, .ai ol { margin: 4px 0 10px 18px; padding: 0; }
+      .ai li { margin: 3px 0; color: var(--text); }
+      .ai li::marker { color: var(--text-muted); }
+
+      /* Inline code */
       .ai code {
-        font-family: 'Fira Code', 'Cascadia Code', Consolas, monospace;
-        font-size: 13px;
-        background: #0f172a;
-        border: 1px solid #334155;
+        font-family: var(--font-mono);
+        font-size: 12.5px;
+        background: #0d1a2a;
+        border: 1px solid var(--border2);
         border-radius: 4px;
         padding: 1px 5px;
-        color: #93c5fd;
+        color: #7db3e0;
       }
+
+      /* Code blocks */
       .ai pre {
-        background: #0d1117;
-        border: 1px solid #30363d;
-        border-radius: 0 0 8px 8px;
-        padding: 14px;
+        background: #0a1220;
+        border: none;
+        border-radius: 0 0 7px 7px;
+        padding: 13px;
         overflow-x: auto;
         margin: 0;
       }
       .ai pre code {
-        background: none;
-        border: none;
-        padding: 0;
-        color: inherit;
-        font-size: 13px;
+        background: none; border: none; padding: 0;
+        color: inherit; font-size: 12.5px;
       }
-      /* Code block container wraps toolbar + pre */
       .code-block-wrap {
-        border: 1px solid #30363d;
-        border-radius: 8px;
+        border: 1px solid #1e3050;
+        border-radius: 7px;
         overflow: hidden;
         margin: 10px 0;
       }
       .code-toolbar {
-        display: flex;
-        align-items: center;
-        gap: 6px;
+        display: flex; align-items: center; gap: 6px;
         padding: 5px 10px;
-        background: #161b22;
-        border-bottom: 1px solid #30363d;
-        min-height: 30px;
+        background: #0d1a2a;
+        border-bottom: 1px solid #1e3050;
+        min-height: 28px;
       }
       .code-file-path {
-        flex: 1;
-        font-size: 11px;
-        color: #60a5fa;
-        font-family: 'Fira Code', Consolas, monospace;
-        overflow: hidden;
-        text-overflow: ellipsis;
-        white-space: nowrap;
+        flex: 1; font-size: 11px; color: var(--accent);
+        font-family: var(--font-mono);
+        overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
       }
       .code-action-btn {
-        font-size: 11px;
-        padding: 2px 8px;
-        border-radius: 4px;
-        border: 1px solid #334155;
-        background: #1e293b;
-        color: #cbd5e1;
-        cursor: pointer;
-        flex-shrink: 0;
+        font-family: var(--font-sans); font-size: 11px;
+        padding: 2px 8px; border-radius: 4px;
+        border: 1px solid var(--border); background: var(--surface2);
+        color: #a0b8d0; cursor: pointer; flex-shrink: 0;
       }
-      .code-action-btn:hover { background: #293548; }
-      .code-action-btn.apply-btn { border-color: #1e40af; color: #93c5fd; }
-      .code-action-btn.apply-btn:hover { background: #1e3a5f; }
-      .code-action-btn.applied { color: #4ade80; border-color: #166534; }
-      .code-action-btn.failed  { color: #f87171; border-color: #7f1d1d; }
+      .code-action-btn:hover { background: #1e2e42; }
+      .code-action-btn.apply-btn { border-color: #1e40af; color: #6aaaf0; }
+      .code-action-btn.apply-btn:hover { background: #1a2e50; }
+      .code-action-btn.applied { color: #5abf80; border-color: #1e4a30; }
+      .code-action-btn.failed  { color: #e07070; border-color: #5a1a1a; }
+
+      /* Blockquote */
       .ai blockquote {
-        border-left: 3px solid #475569;
-        margin: 8px 0;
-        padding: 4px 12px;
-        color: #94a3b8;
+        border-left: 2px solid var(--border); margin: 8px 0;
+        padding: 3px 12px; color: var(--text-dim);
       }
-      .ai table { border-collapse: collapse; width: 100%; margin: 10px 0; font-size: 13px; }
-      .ai th, .ai td { border: 1px solid #334155; padding: 6px 10px; text-align: left; }
-      .ai th { background: #1e293b; color: #cbd5e1; }
-      .ai tr:nth-child(even) td { background: #162032; }
-      .ai strong { color: #f1f5f9; }
-      .ai em { color: #cbd5e1; }
-      .ai a { color: #60a5fa; }
-      .ai hr { border: none; border-top: 1px solid #334155; margin: 12px 0; }
-      .controls { padding: 10px; border-top: 1px solid #334155; display: grid; gap: 8px; }
-      textarea { width: 100%; min-height: 100px; border-radius: 8px; border: 1px solid #334155; background: #0b1220; color: #e2e8f0; padding: 10px; box-sizing: border-box; resize: vertical; }
-      button, select { border: 1px solid #334155; background: #1e293b; color: #e2e8f0; border-radius: 8px; padding: 8px 10px; cursor: pointer; }
-      button:hover { background: #293548; }
-      #newSessionBtn { color: #94a3b8; font-size: 12px; padding: 6px 8px; }
+
+      /* Tables — clean, Mac-like */
+      .ai table {
+        border-collapse: collapse; width: 100%;
+        margin: 10px 0; font-size: 13px;
+        border: 1px solid var(--border2); border-radius: 6px;
+        overflow: hidden;
+      }
+      .ai th {
+        background: #0d1a2a; color: #8099b4;
+        padding: 7px 12px; text-align: left;
+        font-weight: 500; font-size: 12px;
+        border-bottom: 1px solid var(--border2);
+        border-right: 1px solid var(--border2);
+      }
+      .ai td {
+        padding: 6px 12px; border-right: 1px solid var(--border2);
+        border-bottom: 1px solid #182030; color: var(--text);
+      }
+      .ai tr:last-child td { border-bottom: none; }
+      .ai th:last-child, .ai td:last-child { border-right: none; }
+      .ai tr:nth-child(even) td { background: #131d2b; }
+
+      /* Strong / em — no heavy white */
+      .ai strong { font-weight: 500; color: #c0cfde; }
+      .ai em { font-style: italic; color: var(--text-dim); }
+      .ai a { color: var(--accent); text-decoration: none; }
+      .ai a:hover { text-decoration: underline; }
+      .ai hr { border: none; border-top: 1px solid var(--border2); margin: 12px 0; }
+
+      /* Controls */
+      .controls { padding: 10px; border-top: 1px solid var(--border2); display: grid; gap: 8px; background: #0d1625; }
+      textarea {
+        width: 100%; min-height: 90px; border-radius: 7px;
+        border: 1px solid var(--border2); background: #0b1220;
+        color: var(--text); padding: 9px 11px;
+        resize: vertical; font-family: var(--font-sans); font-size: 14px;
+      }
+      textarea:focus { outline: none; border-color: var(--accent2); }
+      button, select {
+        font-family: var(--font-sans);
+        border: 1px solid var(--border); background: var(--surface2);
+        color: var(--text); border-radius: 7px; padding: 7px 12px; cursor: pointer;
+        font-size: 13px;
+      }
+      button:hover { background: #1e2e42; }
+      #newSessionBtn { color: var(--text-dim); font-size: 12px; padding: 5px 8px; }
       .row { display: flex; gap: 8px; align-items: center; }
-      .status { font-size: 12px; color: #93c5fd; }
-      .hint { font-size: 12px; color: #94a3b8; }
-      .label { font-size: 11px; color: #64748b; margin-bottom: 3px; }
+      .status { font-size: 12px; color: var(--accent); }
+      .hint { font-size: 12px; color: var(--text-muted); }
+      .label { font-size: 11px; color: var(--text-muted); margin-bottom: 3px; }
 
       /* ── Sample Prompts panel ───────────────────────────────────── */
       #promptsOverlay {
         display: none; position: fixed; inset: 0; z-index: 200;
-        background: rgba(0,0,0,0.55);
+        background: rgba(0,0,0,0.5);
       }
       #promptsPanel {
         position: absolute; right: 0; top: 0; bottom: 0; width: 520px;
         max-width: 96vw;
-        background: #111827; border-left: 1px solid #334155;
+        background: var(--surface); border-left: 1px solid var(--border);
         display: flex; flex-direction: column; overflow: hidden;
         box-shadow: -8px 0 32px rgba(0,0,0,0.5);
       }
-      #promptsPanel .ph { color: #fb923c; font-weight: 600; }
+      #promptsPanel .ph { color: #e0883a; font-weight: 400; font-style: italic; }
       .p-card {
-        background: #1e293b; border: 1px solid #334155; border-radius: 8px;
-        padding: 10px 12px; cursor: pointer; transition: border-color 0.12s;
+        background: var(--surface2); border: 1px solid var(--border2); border-radius: 7px;
+        padding: 10px 12px; cursor: pointer; transition: border-color 0.1s;
       }
-      .p-card:hover { border-color: #475569; }
-      .p-title { font-size: 13px; font-weight: 600; color: #f1f5f9; }
-      .p-text { font-size: 12px; color: #94a3b8; line-height: 1.55; margin-top: 5px; }
+      .p-card:hover { border-color: #3a5070; background: #1e2d42; }
+      .p-title { font-size: 13px; font-weight: 500; color: #c0cfde; }
+      .p-text { font-size: 12px; color: var(--text-dim); line-height: 1.55; margin-top: 4px; }
       .p-tab {
-        flex-shrink: 0; font-size: 11px; padding: 4px 10px; border-radius: 6px;
-        white-space: nowrap; border: 1px solid #334155; background: #1e293b; color: #94a3b8;
-        cursor: pointer;
+        flex-shrink: 0; font-size: 11px; padding: 4px 10px; border-radius: 5px;
+        white-space: nowrap; border: 1px solid var(--border2); background: var(--surface2);
+        color: var(--text-dim); cursor: pointer; font-family: var(--font-sans);
       }
-      .p-tab:hover { background: #293548; }
-      .p-tab.active { background: #1e3a5f; color: #93c5fd; border-color: #1e40af; }
-      .mb-chat    { background:#1e3a5f; color:#60a5fa; }
-      .mb-deep    { background:#2d1f5e; color:#a78bfa; }
-      .mb-impact  { background:#451f00; color:#fb923c; }
-      .mb-generate{ background:#14291a; color:#4ade80; }
+      .p-tab:hover { background: #1e2e42; }
+      .p-tab.active { background: #152a4a; color: #6aaaf0; border-color: #1e3a6a; }
+      .mb-chat    { background:#152a4a; color:#6aaaf0; }
+      .mb-deep    { background:#25185a; color:#9b7fe8; }
+      .mb-impact  { background:#3a1800; color:#e89440; }
+      .mb-generate{ background:#0f2a18; color:#4abf70; }
       .mode-badge {
-        display: inline-block; font-size: 10px; font-weight: 700;
+        display: inline-block; font-size: 10px; font-weight: 500;
         padding: 1px 7px; border-radius: 3px; text-transform: uppercase;
-        letter-spacing: 0.05em; flex-shrink: 0;
+        letter-spacing: 0.04em; flex-shrink: 0;
       }
-      #promptsBtn { font-size: 12px; padding: 6px 10px; color: #94a3b8; }
+      #promptsBtn { font-size: 12px; padding: 5px 10px; color: var(--text-dim); }
     </style>
   </head>
   <body>
@@ -223,8 +272,8 @@
     <div id="promptsOverlay">
       <div id="promptsPanel">
         <div style="padding:12px 16px; border-bottom:1px solid #334155; display:flex; align-items:center; gap:10px; flex-shrink:0;">
-          <span style="font-size:15px; font-weight:700; color:#f1f5f9;">Sample Prompts</span>
-          <span style="font-size:11px; color:#64748b; flex:1;">Click any prompt → fills input. Replace <span style="color:#fb923c;">[BRACKETED]</span> values before sending.</span>
+          <span style="font-size:15px; font-weight:500; color:#b8c8de;">Sample Prompts</span>
+          <span style="font-size:11px; color:#4e6179; flex:1;">Click any prompt → fills input. Replace <span style="color:#e0883a; font-style:italic;">[bracketed]</span> placeholders before sending.</span>
           <button id="closePromptsBtn" style="background:none; border:none; color:#64748b; font-size:22px; cursor:pointer; line-height:1; padding:0 2px;" title="Close">×</button>
         </div>
         <div id="promptTabs" style="display:flex; gap:5px; padding:8px 12px; border-bottom:1px solid #334155; overflow-x:auto; flex-shrink:0; scrollbar-width:thin;"></div>
@@ -410,7 +459,7 @@
         const tools = (planData.tools || [])
           .map(t => `<span class="tool-tag">${t}</span>`).join(" ");
         const reasoning = planData.reasoning || "";
-        strip.innerHTML = `<strong>Gathered via:</strong> ${tools}${reasoning ? ` — ${reasoning}` : ""}`;
+        strip.innerHTML = `<span style="color:#4e6179">Gathered via:</span> ${tools}${reasoning ? ` <span style="color:#3a5070">— ${reasoning}</span>` : ""}`;
       }
 
       async function askStream(question, selectedMode) {
@@ -564,13 +613,13 @@
           name: "Architecture", icon: "🏗️",
           prompts: [
             { mode:"chat", title:"Platform Services Map",
-              text:"What microservices make up this platform? List each service (ms-java-appointments, ms-java-order, ms-java-sites, ms-java-tenancy, etc.), what it owns, and how they communicate — Feign or Kafka." },
-            { mode:"chat", title:"Appointments Service Overview",
-              text:"What does ms-java-appointments do? List its main endpoints, MongoDB collections, Feign clients it calls, Kafka topics it produces/consumes, and which Angular modules use it." },
+              text:"What microservices make up this platform? List each service, what it owns, and how services communicate — Feign or Kafka." },
+            { mode:"chat", title:"Service Overview",
+              text:"What does [service-name] do? List its main endpoints, MongoDB collections, Feign clients it calls, Kafka topics it produces/consumes, and which Angular modules use it." },
             { mode:"chat", title:"Angular Frontend Features",
-              text:"What features does pan-portal expose? List all Angular modules (ActivityLogModule, SolutionHubModule, SiteDesignerPageModule, CustomersModule, etc.) with their entry components and which backend service each calls." },
+              text:"What features does the frontend expose to users? List all Angular modules with their entry components and which backend service each calls." },
             { mode:"chat", title:"Inter-Service Dependency Graph",
-              text:"What is the inter-service dependency graph? For each service show which other services it calls via Feign (with the client-api.xxx.baseurl URL) and which Kafka topics it produces or consumes." },
+              text:"What is the inter-service dependency graph? For each service show which other services it calls via Feign (with the resolved URL) and which Kafka topics it produces or consumes." },
             { mode:"chat", title:"Authentication & Auth Flow",
               text:"How does authentication work across this platform? Who issues JWT tokens, how are they validated in each Spring Boot service, and which Angular interceptor attaches the auth header?" },
             { mode:"chat", title:"Kafka Event Topology",
@@ -580,153 +629,127 @@
         {
           name: "End-to-End Flows", icon: "🔁",
           prompts: [
-            { mode:"deep", title:"Book Appointment — Full Flow",
-              text:"For BookAppointmentSlotModule give me end-to-end call details from UI to API to repositories. Include Angular component → Angular service → HTTP URL → Spring controller → service bean (with Lombok deps) → downstream Feign calls → MongoDB collection." },
-            { mode:"deep", title:"Activity Log — UI to API",
-              text:"For ActivityLogModule give me end-to-end call details from UI to API to repositories. Trace Angular component → Angular service → HTTP call → ms-java-[service] controller → service bean → repository → MongoDB collection." },
-            { mode:"deep", title:"Solution Hub — Full Flow",
-              text:"For SolutionHubModule give me end-to-end call details from UI to external service. Include Angular layer → controller in ms-java-solution → service implementation → downstream Feign calls to other microservices with their resolved URLs and request/response DTOs." },
-            { mode:"deep", title:"Order Creation — Full Flow",
-              text:"What happens when a user creates an order? Trace from the Angular form submit → Angular service HTTP call → ms-java-order controller → OrderService → downstream Feign calls → MongoDB write → Kafka events produced." },
-            { mode:"deep", title:"Tenancy Creation — Full Flow",
-              text:"For TenancyModule or tenancy creation flow give me end-to-end trace from UI to API. Show Angular component → Angular service → ms-java-tenancy controller → service → Feign calls to ms-java-identity or downstream services → MongoDB collection write." },
-            { mode:"deep", title:"Site Designer — Full Flow",
-              text:"For SiteDesignerPageModule give me end-to-end call details. Trace Angular component → Angular service → ms-java-sites controller → service bean → repository queries → MongoDB document. Include any Feign calls to downstream services." },
-            { mode:"deep", title:"Custom Feature Trace",
-              text:"For [FeatureModule or feature name] give me end-to-end call details from UI to API to repositories. Include all layers: Angular → controller → strategy/delegate → service → external Feign calls → MongoDB." },
+            { mode:"deep", title:"Feature End-to-End",
+              text:"For [FeatureModule or feature name] give me end-to-end call details from UI to API to repositories. Include all layers: Angular component → Angular service → HTTP URL → controller → strategy/delegate → service impl → downstream Feign calls → MongoDB collection." },
+            { mode:"deep", title:"Module Full Trace",
+              text:"For [ModuleName]Module give me end-to-end call details from UI to API to repositories. Trace Angular component → Angular service → HTTP call → controller → service bean (with Lombok deps) → downstream Feign calls → MongoDB collection." },
             { mode:"deep", title:"Endpoint Full Trace",
-              text:"Trace the complete request flow for [GET/POST/PUT/DELETE] [/api/path]. Show Angular callers, Spring controller (with @EntitlementOrRoleBasedAuthorisation), service impl, downstream Feign calls with resolved URLs, repository queries, and Kafka events." },
+              text:"Trace the complete request flow for [GET/POST/PUT/DELETE] [/api/path]. Show Angular callers, Spring controller (with auth annotation), service impl, downstream Feign calls with resolved URLs, repository queries, and Kafka events." },
+            { mode:"deep", title:"User Action Flow",
+              text:"What happens when a user [performs action, e.g. submits a booking]? Trace all services involved — Angular form → HTTP call → controller → service → downstream Feign calls → MongoDB write → Kafka events produced." },
+            { mode:"deep", title:"Cross-Service Call Flow",
+              text:"Walk me through how [service-A] calls [service-B]. Show the Feign client class, resolved URL from application.properties, request/response DTOs, OAuth scope, and what [service-B] does with the request internally." },
+            { mode:"deep", title:"Kafka Event Flow",
+              text:"Trace the [event-topic-name] Kafka event. Who produces it, what triggers production, what is the payload structure, and which services consume it and what do they do?" },
           ],
         },
         {
           name: "Backend API Docs", icon: "📋",
           prompts: [
-            { mode:"chat", title:"Appointments API Reference",
-              text:"What endpoints does ms-java-appointments expose? For each endpoint show: HTTP method, path, @EntitlementOrRoleBasedAuthorisation context, request DTO (with key fields), and response DTO." },
-            { mode:"chat", title:"Order Service API Reference",
-              text:"What endpoints does ms-java-order expose? For each endpoint list HTTP method, path, auth requirement, request DTO fields, and response DTO. Group by controller class." },
-            { mode:"chat", title:"Sites Service API Reference",
-              text:"What endpoints does ms-java-sites expose? For each endpoint list HTTP method, path, required entitlement context, request DTO, and response type." },
-            { mode:"chat", title:"Tenancy Service API Reference",
-              text:"What endpoints does ms-java-tenancy expose? List all endpoints with HTTP method, path, auth annotation, and request/response DTO names." },
-            { mode:"chat", title:"Identity Service API Reference",
-              text:"What endpoints does ms-java-identity expose? List all endpoints with HTTP method, path, auth requirements, and request/response DTOs." },
-            { mode:"chat", title:"Customers Service API Reference",
-              text:"What endpoints does ms-java-customers expose? List all with HTTP method, path, entitlement annotation, and DTO structure." },
-            { mode:"chat", title:"Custom Service API Reference",
-              text:"What endpoints does [service-name] expose? For each endpoint show HTTP method, path, @EntitlementOrRoleBasedAuthorisation context, request DTO (with key fields), and response DTO." },
+            { mode:"chat", title:"Service API Reference",
+              text:"What endpoints does [service-name] expose? For each endpoint show: HTTP method, path, auth annotation (@EntitlementOrRoleBasedAuthorisation context), request DTO (with key fields), and response DTO." },
+            { mode:"chat", title:"Controller Walkthrough",
+              text:"Walk me through [ControllerName] in [service-name] — what endpoints does it handle, what auth is required for each, what service does it delegate to, and what request/response DTOs are involved?" },
+            { mode:"chat", title:"Auth-Required Endpoints",
+              text:"Which endpoints in [service-name] require authentication? List them with their @EntitlementOrRoleBasedAuthorisation context value and any role restrictions." },
+            { mode:"chat", title:"DTO Field Structure",
+              text:"What does the [DTOName] request/response look like? Show all fields, Java types, required status, validation annotations (@NotNull, @Size etc.), and @JsonProperty aliases." },
             { mode:"generate", title:"Generate Full API Contract",
-              text:"Generate a complete API contract document for ms-java-appointments. For every endpoint show: method, path, auth, request DTO field table (field name, type, required, validation), response DTO field table. Format as structured markdown suitable for a Confluence page." },
+              text:"Generate a complete API contract document for [service-name]. For every endpoint show: method, path, auth, request DTO field table (name, type, required, validation), response DTO field table. Format as structured markdown." },
+            { mode:"generate", title:"OpenAPI-Style Spec",
+              text:"Generate an OpenAPI-style specification for all endpoints in [service-name]. Include: method, path, auth requirement, requestBody schema (with field types and validation), and response schema. Use only information from the indexed codebase." },
           ],
         },
         {
           name: "External APIs", icon: "🌐",
           prompts: [
-            { mode:"chat", title:"Appointments Downstream Calls",
-              text:"What does ms-java-appointments call downstream? List all Feign clients with: client name, resolved URL (from client-api.xxx.baseurl in application.properties), OAuth scope (@AuthorizationToken), and every endpoint mapped on each client with request/response DTOs." },
-            { mode:"chat", title:"Order Service Downstream Calls",
-              text:"What does ms-java-order call downstream? List all Feign clients with resolved URLs, OAuth scopes, and the endpoints each client maps — including request body and response type for each call." },
-            { mode:"chat", title:"Sites Service External Calls",
-              text:"What external/downstream services does ms-java-sites call? Show each Feign client, its resolved URL, OAuth scope, and all endpoints it invokes with request and response DTO details." },
-            { mode:"chat", title:"All External Calls (Platform-Wide)",
-              text:"Across all services, what external downstream calls are made? List every Feign client, the service it belongs to, the resolved URL, the OAuth scope, and each endpoint called — distinguish [internal] microservice calls from [external] third-party APIs." },
-            { mode:"deep", title:"Feign Client Detail — Appointments",
-              text:"Show full detail for all Feign clients used in ms-java-appointments. For each client: class name, resolved URL from application.properties, @AuthorizationToken OAuth scope, every HTTP method + path mapped, request DTO fields, response DTO fields, and path/query params." },
+            { mode:"chat", title:"Service Downstream Calls",
+              text:"What does [service-name] call downstream? List all Feign clients with: client class name, resolved URL (from client-api.xxx.baseurl in application.properties), OAuth scope (@AuthorizationToken), and every endpoint mapped with request/response DTOs." },
+            { mode:"chat", title:"All Platform External Calls",
+              text:"Across all services, what external downstream calls are made? List every Feign client, the service it belongs to, the resolved URL, OAuth scope, and each endpoint called — distinguish internal microservice calls from external third-party APIs." },
+            { mode:"deep", title:"Feign Client Deep Dive",
+              text:"Show full detail for all Feign clients used in [service-name]. For each client: class name, resolved URL, OAuth scope, every HTTP method + path mapped, request DTO fields, response DTO fields, and path/query params." },
             { mode:"chat", title:"OAuth Scope Inventory",
               text:"What OAuth scopes are used for downstream Feign calls in this platform? List each @AuthorizationToken scope value, which Feign client uses it, and which downstream service it authenticates against." },
-            { mode:"chat", title:"Custom Service Downstream Calls",
-              text:"What does [service-name] call downstream? List all Feign clients with resolved URLs (client-api.xxx.baseurl), OAuth scopes (@AuthorizationToken), and all endpoints mapped — with request and response DTO structure." },
+            { mode:"chat", title:"Feign Failure Handling",
+              text:"What happens when a Feign call fails in [service-name]? Show the error handling, custom *FeignClientException types thrown, any circuit breaker or retry config, and how errors are surfaced to the caller." },
           ],
         },
         {
           name: "Business Logic", icon: "🧠",
           prompts: [
-            { mode:"deep", title:"Appointment Availability Logic",
-              text:"What is the business logic for checking appointment availability in ms-java-appointments? Trace the service method — what Feign calls does it make to get slots, how does it filter/transform the response, and what does it return?" },
-            { mode:"deep", title:"Order Processing Logic",
-              text:"What is the order processing logic in ms-java-order? Show the main service method — its Lombok dependencies, which downstream services it calls via Feign, any Kafka events it fires, and what MongoDB write it performs." },
-            { mode:"deep", title:"Notification Dispatch Logic",
-              text:"How does notification dispatch work in ms-java-notifications? Show the service logic — what triggers a notification, how the event type is determined (EventModel switch/dispatch), which channel is selected, and what downstream calls are made." },
-            { mode:"deep", title:"Workflow Processing Logic",
-              text:"How does ms-java-workflow process workflow steps? Show the main processing service — its delegate/strategy resolution pattern, what conditions drive state transitions, and which downstream services are called at each step." },
-            { mode:"deep", title:"Strategy/Delegate Pattern",
+            { mode:"deep", title:"Service Business Logic",
+              text:"What is the business logic in [ServiceName] in [service-name]? Show the main processing method — its @RequiredArgsConstructor dependencies, the logic steps, downstream Feign calls, MongoDB reads/writes, and any Kafka events published." },
+            { mode:"deep", title:"Method Implementation",
+              text:"What does [ClassName]::[methodName] do in [service-name]? Show the actual method body, what it calls, how it transforms data, and what it returns." },
+            { mode:"deep", title:"Strategy / Delegate Pattern",
               text:"Where is the strategyFactory.getStrategy() pattern used in [service-name]? Show which controller calls it, what Delegate implementation classes handle each case, and what each delegate does differently." },
-            { mode:"deep", title:"Custom Business Logic",
-              text:"What is the business logic in [ServiceName] in [service-name]? Show the main processing method — its dependencies (@RequiredArgsConstructor private final fields), the logic steps, downstream Feign calls, MongoDB reads/writes, and any Kafka events published." },
+            { mode:"deep", title:"What Happens When",
+              text:"What happens when a user [performs action, e.g. cancels an order]? Trace the complete code path — which Angular component triggers it, which controller handles it, which service methods run, downstream calls made, and DB/Kafka side effects." },
+            { mode:"chat", title:"Repository Queries",
+              text:"What does [RepositoryClassName] in [service-name] query? List all derived Spring Data methods with their generated query logic, and any MongoTemplate Criteria.where() queries in the service." },
           ],
         },
         {
           name: "MongoDB & Data", icon: "🗄️",
           prompts: [
-            { mode:"chat", title:"Appointments Collections",
-              text:"What MongoDB collections does ms-java-appointments use? For each @Document class show: collection name (with db.collection.suffix resolved), all fields with Java types, @DBRef relationships to other documents, and any indexes." },
-            { mode:"chat", title:"Order Service Collections",
-              text:"What MongoDB collections does ms-java-order use? List each @Document with collection name, fields (types, required), and @DBRef relationships." },
-            { mode:"chat", title:"MongoTemplate Queries — Appointments",
-              text:"What MongoTemplate queries does ms-java-appointments run? Show each Criteria.where() chain — the collection queried, filter criteria, projection fields, and which service method runs it." },
-            { mode:"chat", title:"MongoTemplate Queries — Custom Service",
-              text:"What MongoTemplate queries does [service-name] run? List each Criteria.where() query — collection, filter, projection, and what service method uses it." },
-            { mode:"chat", title:"Repository Methods",
-              text:"What does [RepositoryClassName] in [service-name] query? List all derived Spring Data methods with their generated query logic, and any MongoTemplate methods in the service that query the same collection." },
-            { mode:"generate", title:"Generate Data Model Diagram",
-              text:"Generate a data model document for ms-java-appointments. For each MongoDB @Document: collection name, field table (name, type, required, @DBRef target), relationships, and which service classes read/write it. Format as a Confluence-ready markdown page." },
+            { mode:"chat", title:"Service MongoDB Collections",
+              text:"What MongoDB collections does [service-name] use? For each @Document class show: collection name (with db.collection.suffix resolved), all fields with Java types, @DBRef relationships to other documents." },
+            { mode:"chat", title:"MongoTemplate Queries",
+              text:"What MongoTemplate queries does [service-name] run? Show each Criteria.where() chain — the collection queried, filter criteria, projection fields, and which service method runs it." },
+            { mode:"chat", title:"Entity / Document Schema",
+              text:"What are the fields of [DocumentName] in [service-name]? Show the @Document collection name, all fields with types, required flags, @DBRef relationships, and which services read/write this collection." },
+            { mode:"generate", title:"Generate Data Model Doc",
+              text:"Generate a data model document for [service-name]. For each MongoDB @Document: collection name, field table (name, type, required, @DBRef target), relationships to other collections, and which service classes read/write it. Format as structured markdown." },
             { mode:"generate", title:"Generate Full Schema Doc",
-              text:"Generate a complete data model and schema document for [service-name]. Include: every MongoDB collection (@Document classes), field definitions, relationships, MongoTemplate queries that access each collection, and which endpoints read/write each collection." },
+              text:"Generate a complete data model and schema document for [service-name]. Include: every MongoDB collection, field definitions, relationships, MongoTemplate queries that access each collection, and which endpoints read/write each collection." },
           ],
         },
         {
           name: "Data Models & Docs", icon: "📊",
           prompts: [
-            { mode:"generate", title:"API + Data Model — Appointments",
-              text:"Generate a comprehensive API and data model document for ms-java-appointments including: (1) All REST endpoints with request/response DTO field tables, (2) All MongoDB collections with field tables and relationships, (3) All Feign downstream calls with resolved URLs and DTO structures. Format as a Confluence-ready markdown page." },
-            { mode:"generate", title:"API + Data Model — Order Service",
-              text:"Generate a comprehensive API and data model document for ms-java-order including: (1) All REST endpoints with request/response DTO field tables, (2) All MongoDB collections with field tables and relationships, (3) All Feign downstream calls with resolved URLs. Format as structured markdown." },
+            { mode:"generate", title:"API + Data Model Document",
+              text:"Generate a comprehensive API and data model document for [service-name] including: (1) All REST endpoints with request/response DTO field tables, (2) All MongoDB collections with field tables and relationships, (3) All Feign downstream calls with resolved URLs and DTO structures. Format as structured markdown." },
             { mode:"chat", title:"Angular-to-Backend API Map",
               text:"What is the full Angular-to-backend API contract map? For each Angular service HTTP call, show: Angular service class → HTTP method + URL → backend controller → Spring service bean → MongoDB collection." },
-            { mode:"chat", title:"Appointment DTO Structures",
-              text:"What do the appointment-related DTOs look like? Show field tables for AppointmentsQuerySlotsInput, AppointmentsResponse, and any other key appointment request/response types — with field names, Java types, required flags, and @JsonProperty aliases." },
-            { mode:"chat", title:"Order DTO Structures",
-              text:"What do the order-related DTOs look like? Show field tables for the main Order request and response DTOs — field names, types, required flags, validation annotations, and @JsonProperty aliases." },
-            { mode:"generate", title:"OpenAPI-Style Spec",
-              text:"Generate an OpenAPI-style specification (in YAML or markdown) for all endpoints in [service-name]. Include: method, path, summary, auth requirement, requestBody schema (with field types), and response schema. Use only information from the indexed codebase." },
+            { mode:"chat", title:"DTO Field Tables",
+              text:"What do the DTOs for [feature or service] look like? Show field tables for the main request and response DTOs — field names, Java types, required flags, validation annotations, and @JsonProperty aliases." },
+            { mode:"generate", title:"Confluence API Page",
+              text:"Generate a Confluence-ready API reference page for [service-name]. Include: service description, base URL, all endpoints (method/path/auth/request/response), DTO field tables, and downstream Feign dependencies." },
           ],
         },
         {
           name: "Impact Analysis", icon: "⚡",
           prompts: [
             { mode:"impact", title:"MongoDB Document Change",
-              text:"What breaks if I change the [DocumentName] MongoDB document in [service-name]? Which services query this collection (via MongoRepository or MongoTemplate), which Angular components display this data, which DTOs reference it, and what API response shapes change?" },
+              text:"What breaks if I change the [DocumentName] MongoDB document in [service-name]? Which services query this collection, which Angular components display this data, which DTOs reference it, and what API response shapes change?" },
             { mode:"impact", title:"Endpoint Change",
               text:"What is the impact of modifying endpoint [/api/path] in [service-name]? Which Feign clients in other services call it, which Angular services make this HTTP call, and which DTO fields would need to change?" },
             { mode:"impact", title:"DTO Field Change",
-              text:"What breaks if I add a required field to [DTOName] in [service-name]? Show all Feign clients in other services that reference this DTO, all Angular TypeScript models that map to it, and any MongoDB documents that persist it." },
-            { mode:"impact", title:"Feign Client URL Change",
-              text:"What is the impact of changing the URL for [FeignClientName] in [service-name]? Which service method calls depend on it, what request/response DTO contracts change, and which application.properties keys need updating?" },
-            { mode:"impact", title:"Auth Annotation Change",
-              text:"What is the impact of changing @EntitlementOrRoleBasedAuthorisation on [endpoint] in [service-name]? Which Angular components call this endpoint and which currently pass the entitlement context header?" },
+              text:"What breaks if I add a required field to [DTOName] in [service-name]? Show all Feign clients in other services that reference this DTO, Angular TypeScript models that map to it, and any MongoDB documents that persist it." },
             { mode:"impact", title:"Kafka Topic Change",
-              text:"What breaks if I rename the Kafka topic currently at spring.kafka.consumer.topic=[topic-name]? Which services produce to this topic, which consume it, and what EventModel types would need updating?" },
+              text:"What breaks if I rename the Kafka topic at spring.kafka.consumer.topic=[topic-name]? Which services produce to this topic, which consume it, and what EventModel types need updating?" },
+            { mode:"impact", title:"Auth Annotation Change",
+              text:"What is the impact of changing @EntitlementOrRoleBasedAuthorisation on [endpoint] in [service-name]? Which Angular components call this endpoint and which pass the entitlement context header?" },
             { mode:"impact", title:"Service Extraction",
-              text:"What breaks if I extract [ClassName] from [service-name] into a new microservice? Show all internal callers, all Feign clients from other services, downstream dependencies, and the MongoDB collections owned." },
+              text:"What breaks if I extract [ClassName] from [service-name] into a new microservice? Show all internal callers, Feign clients from other services, downstream dependencies, and the MongoDB collections owned." },
           ],
         },
         {
           name: "Code Generation", icon: "⚙️",
           prompts: [
             { mode:"generate", title:"New REST Endpoint",
-              text:"Add a [GET/POST/PUT/DELETE] endpoint to [ControllerName] in [service-name]. Follow the existing patterns: @EntitlementOrRoleBasedAuthorisation annotation, Lombok @RequiredArgsConstructor service injection, same response wrapper, and matching package structure." },
+              text:"Add a [GET/POST/PUT/DELETE] endpoint to [ControllerName] in [service-name] for [description]. Follow the existing patterns: @EntitlementOrRoleBasedAuthorisation annotation, Lombok @RequiredArgsConstructor service injection, same response wrapper, matching package structure." },
             { mode:"generate", title:"New Feign Client",
-              text:"Create a new Feign client in [service-name] to call [target-service]. Follow the existing Feign client pattern: @FeignClient with url=${client-api.[name].baseurl}, @AuthorizationToken OAuth scope annotation, request/response DTOs matching the target service, and *FeignClientException error handling." },
+              text:"Create a new Feign client in [service-name] to call [target-service]. Follow the existing Feign client pattern: @FeignClient with url=${client-api.[name].baseurl}, @AuthorizationToken OAuth scope annotation, request/response DTOs, and *FeignClientException error handling." },
             { mode:"generate", title:"New MongoDB Document + Repository",
-              text:"Add a new MongoDB @Document [DocumentName] with fields [field1: Type, field2: Type] in [service-name]. Generate: @Document class, MongoRepository interface, and service class using @RequiredArgsConstructor. Follow the exact collection naming pattern (db.collection.suffix) used in this service." },
+              text:"Add a new MongoDB @Document [DocumentName] with fields [field1: Type, field2: Type] in [service-name]. Generate: @Document class, MongoRepository interface, and service class using @RequiredArgsConstructor. Follow the collection naming pattern used in this service." },
             { mode:"generate", title:"New Kafka Event Publisher",
               text:"Add a Kafka event publisher to [service-name] that fires a [topic-name] event when [triggering action]. Follow the existing kafkaTemplate.send() pattern — include event payload DTO, @Value topic property injection, and the EventModel dispatch pattern." },
             { mode:"generate", title:"New Angular Service",
-              text:"Create a new Angular service in pan-portal to call [backend endpoint path]. Follow the existing HTTP service pattern — extend the correct base service class (EntityService), use the API_SLUGS constant for URL construction, include TypeScript model matching the backend DTO, and use Observable/pipe/map patterns." },
-            { mode:"generate", title:"MongoTemplate Query",
-              text:"Add a MongoTemplate Criteria query to [RepositoryClassName] or [ServiceClassName] in [service-name] that finds [description of what to query]. Follow the existing Criteria.where().and().is() pattern and the same field naming from the @Document class." },
+              text:"Create a new Angular service in [project] to call [backend endpoint path]. Follow the existing HTTP service pattern — extend the correct base service class, use the API_SLUGS constant for URL construction, TypeScript model matching the backend DTO, Observable/pipe/map patterns." },
             { mode:"generate", title:"Unit Test Class",
-              text:"Generate a unit test class for [ClassName] in [service-name]. Mock all @RequiredArgsConstructor Feign client and repository dependencies using Mockito. Cover [methodName] with happy path, Feign failure (*FeignClientException), and validation edge cases." },
+              text:"Generate a unit test class for [ClassName] in [service-name]. Mock all @RequiredArgsConstructor dependencies using Mockito. Cover [methodName] with happy path, Feign failure (*FeignClientException), and validation edge cases." },
             { mode:"generate", title:"Full Feature Scaffold",
               text:"Scaffold a new feature [feature-name] in [service-name]: (1) MongoDB @Document with repository, (2) service class with @RequiredArgsConstructor, (3) REST controller with @EntitlementOrRoleBasedAuthorisation, (4) request/response DTOs. Follow exact patterns from [similar-feature-name]." },
           ],
