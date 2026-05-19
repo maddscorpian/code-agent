@@ -24,6 +24,18 @@ python -m embeddings.watcher
 
 **No test suite exists.** Validate parser changes by running `python -m digest.digest_runner` and inspecting `digests/<project>.digest.json`, then checking `curl http://localhost:8765/graph/summary` after a full reindex.
 
+## Codebase-specific patterns (built into prompts and parser)
+
+The actual indexed codebase uses these patterns — they are documented in `SYSTEM_PROMPT_BASE` and handled by the parsers:
+- **Lombok everywhere**: `@RequiredArgsConstructor` (no explicit constructor), `@Slf4j`, `@Getter`/`@Setter`
+- **MongoDB, not JPA**: `MongoRepository`, `MongoTemplate` + `Criteria.where()`, `@Document` entities
+- **Feign URL convention**: `client-api.<serviceName>.baseurl` in `application.properties`
+- **Custom auth annotations**: `@AuthorizationToken(scope=...)` on Feign clients; `@EntitlementOrRoleBasedAuthorisation(context=...)` on controller methods
+- **Kafka SpEL**: `topics = "#{'${spring.kafka.consumer.topic}'}"` — resolved via properties
+- **Strategy/Delegate pattern**: controllers call `strategyFactory.getStrategy(category)` → `@Component` Delegate classes
+- **Angular base class HTTP**: services `extend BaseService` and use `override loadMany()` — HTTP call is in parent class file
+- **Multi-file properties**: `spring.config.import=optional:classpath:...` loads additional property files
+
 ## Required environment
 
 - `projects.yaml` — registers the codebases to index (absolute paths, `angular` or `spring-boot` type)
@@ -78,6 +90,16 @@ question → Planner LLM call (picks 3–6 tools)
 **ChromaDB namespacing:** Graph nodes go into `file_path="graph/nodes"`, feature chunks into `file_path="graph/features"`. These are separate to prevent hash collisions. IDs use `abs(hash(nid))` without modulo — full 64-bit to avoid collisions at 1000+ nodes.
 
 **Java constant resolution (`digest/springboot_parser.py`):** `_build_constant_map()` scans all `.java` files for `static final String FIELD = "value"` before parsing. Used by `_extract_path_from_mapping_args()` to resolve `@GetMapping(SiteConstant.SITE_BASE_URL)` → `/api/v1/sites`.
+
+**Lombok `@RequiredArgsConstructor` (`digest/springboot_parser.py`):** If the class has `@RequiredArgsConstructor` or `@AllArgsConstructor`, all `private final` fields are collected as constructor-injected dependencies (Lombok generates the constructor at compile time — no explicit constructor exists in the Java source). This is critical: without this, `dependencies: []` for every bean and zero `depends_on` graph edges.
+
+**MongoTemplate query capture (`digest/springboot_parser.py`):** `_parse_repository_queries()` detects `mongoTemplate.find/update/remove(...)` calls and extracts `Criteria.where("field")` chains as `[mongoTemplate.find] Entity WHERE field = ? AND ...` descriptions. These custom repository implementations don't use `@Query` annotations.
+
+**Multi-file property loading (`_build_properties_map`):** After loading primary config files, follows `spring.config.import=optional:classpath:filename` entries to load additional property files from `src/main/resources/`. This is required for `client-api.xxx.baseurl` Feign URLs that may be defined in imported files.
+
+**Custom auth annotations (`_parse_controllers`, `_parse_feign`):** `@EntitlementOrRoleBasedAuthorisation(context="...")` sets `auth_required=True` and appends `entitlement:<context>` to roles. `@RestrictedAPIAccess` sets `auth_required=True`. `@AuthorizationToken(scope="...")` on Feign clients is parsed and the scope stored in `FeignClientDigest.oauth_scope`.
+
+**Angular base-class HTTP (`digest/angular_parser.py`):** `_extract_http_calls()` first searches the current file for `this.http.*` calls; if none found, detects `extends ParentClass` and searches the project for the parent class file to extract HTTP calls there. This handles the `override loadMany/loadOne` pattern where actual HTTP is in the base service.
 
 **NoSQL document entity detection (`digest/springboot_parser.py`):** `_NOSQL_DOCUMENT_ANNOTATIONS = {"Document", "RedisHash", "Node", "DynamoDBTable"}` — the AST parser flags `has_entity=True` for any of these, just like `@Entity`. `_parse_entities()` branches on `has_jpa` vs `has_nosql`: for MongoDB it calls `_extract_document_collection()` to get the collection name. `@Field` is treated the same as `@Column` for field extraction; `@DBRef` is treated like JPA `@OneToMany`. `_REPO_SUPERTYPES` covers `MongoRepository`, `ReactiveMongoRepository`, and all other Spring Data supertypes — interfaces that extend these are detected as repositories even without `@Repository` annotation.
 
