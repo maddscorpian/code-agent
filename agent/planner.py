@@ -66,7 +66,7 @@ Mode: {mode}
 
 Planning guidelines:
 - "how does [feature/module/flow] work" → describe_feature (strip Module/Component suffix, e.g. BookAppointmentSlotModule → "Book Appointment Slot") + search_deep + get_method_calls (on main ServiceImpl)
-- "end to end" / "UI to API" / "frontend to backend" / "from UI" / "UI to API" / "repositories" questions → describe_feature (extract the feature/module name) + get_method_calls (ServiceImpl) + search_deep("controller endpoints {feature}")
+- "end to end" / "UI to API" / "frontend to backend" / "from UI" / "UI to API" / "repositories" questions → describe_feature (extract the feature/module name) + get_method_calls (ServiceImpl) + search_deep("controller endpoints {feature}") + get_external_calls(service-name)
 - "what can a user do" / "what features exist" → list_features + search_deep
 - deep/architecture/flow questions → search_deep + trace_request + get_method_calls (for key service classes)
 - "how does X work" questions      → trace_request + search_deep + get_method_calls (on the main service)
@@ -75,14 +75,18 @@ Planning guidelines:
 - "who calls X" questions          → find_callers + search_deep
 - "what breaks if I change X"      → impact_graph + search_deep
 - "how does event X flow" / "who consumes X events" / "what events does X produce" → trace_event_flow + search_deep
-- "what does [service] call" / "downstream dependencies of X" → get_external_calls + search_deep
-- "what fields does X have" / "what does the request/response look like" → get_dto_schema + search_deep
+- "what does [service] call" / "downstream dependencies of X" / "external calls" / "feign client" / "downstream" → get_external_calls(service-name) + search_deep
+- "what fields does X have" / "what does the request/response look like" / "dto structure" / "request body" → get_dto_schema + search_deep
+- "what endpoints does [service] expose" / "api reference" / "api contract" / "api documentation" / "generate api doc" → get_all_endpoints(service-name) + get_dto_schema + get_external_calls(service-name)
+- "data model" / "mongodb schema" / "collection schema" / "what collections" / "entity fields" → get_entity_schema + search_deep + search_codebase("MongoTemplate collection")
+- "business logic" / "what happens when" / "logic in service" / "processing logic" → get_method_implementation + get_method_calls + search_deep
 - generate/implement questions     → search_codebase (patterns) + get_entity_schema (entity) + get_method_calls (similar class)
 - chat/explain questions           → search_codebase + trace_request (if a path is mentioned)
 - Use 3–6 tool calls; never call the same tool twice with the same input.
 - For deep mode: ALWAYS use search_deep instead of search_codebase — it runs multi-hop retrieval.
 - ALWAYS use describe_feature when an Angular Module, Component, or feature name is mentioned alongside "end to end", "flow", "UI", "API", or "trace".
 - For describe_feature input: strip Module/Component/Service suffix from class names (BookAppointmentSlotModule → "Book Appointment Slot").
+- For end-to-end questions in deep mode: ALWAYS add get_external_calls to show downstream Feign calls.
 
 Output exactly this JSON (no markdown, no backticks):
 {{"reasoning":"why these tools and inputs","tool_calls":[{{"tool":"tool_name","input":"tool_input"}}]}}
@@ -240,6 +244,32 @@ def _default_plan(question: str, mode: str) -> PlanResult:
 
     elif any(w in q for w in ("implementation", "source code", "logic in", "body of", "how does", "what does")) and re.search(r'\b[a-z][A-Za-z]+[A-Z][a-z]', question):
         # Likely asking about a specific method — camelCase detected
+        subject = _extract_subject(question) or question[:40]
+        method_m = re.search(r'\b([a-z][A-Za-z]+[A-Z][a-z][A-Za-z]*)\b', question)
+        method = method_m.group(1) if method_m else ""
+        impl_input = f"{subject}::{method}" if method and subject else subject or question[:40]
+        calls.append(ToolCall("get_method_implementation", impl_input))
+        calls.append(ToolCall("get_method_calls", subject))
+        calls.append(ToolCall("search_deep", question))
+
+    elif any(w in q for w in ("api reference", "api contract", "api documentation", "api doc", "generate api", "all endpoints", "what endpoints")):
+        subject = _extract_subject(question) or question[:40]
+        calls.append(ToolCall("get_all_endpoints", subject))
+        calls.append(ToolCall("get_external_calls", subject))
+        calls.append(ToolCall("search_deep", question))
+
+    elif any(w in q for w in ("data model", "mongodb schema", "collection schema", "what collections", "entity schema", "document schema", "db schema")):
+        subject = _extract_subject(question) or question[:40]
+        calls.append(ToolCall("get_entity_schema", subject))
+        calls.append(ToolCall("search_deep", "MongoDB collection document schema " + subject))
+        calls.append(ToolCall("search_codebase", question))
+
+    elif any(w in q for w in ("downstream", "feign client", "external call", "what does", "calls downstream")) and any(w in q for w in ("call", "calls", "downstream", "feign", "external")):
+        subject = _extract_subject(question) or question[:40]
+        calls.append(ToolCall("get_external_calls", subject))
+        calls.append(ToolCall("search_deep", question))
+
+    elif any(w in q for w in ("business logic", "what happens when", "processing logic", "how is", "logic in")):
         subject = _extract_subject(question) or question[:40]
         method_m = re.search(r'\b([a-z][A-Za-z]+[A-Z][a-z][A-Za-z]*)\b', question)
         method = method_m.group(1) if method_m else ""

@@ -251,7 +251,7 @@ sequenceDiagram
 |---|---|
 | `server.py` | FastAPI app. All HTTP endpoints. Manages session store and graph store lifecycle. Handles SSE streaming with plan/session/done events. |
 | `schemas.py` | Pydantic request/response models: `AskRequest`, `AskResponse`, `ApplyRequest`, `ApplyResponse`. |
-| `static/chat.html` | Single-file browser chat UI. Markdown (marked.js) + syntax highlighting (highlight.js), diff renderer with Apply/Copy buttons, session persistence, plan strip showing tools used, **📋 Prompts panel** (50 structured prompts across 8 categories). |
+| `static/chat.html` | Single-file browser chat UI. Markdown (marked.js) + syntax highlighting (highlight.js), diff renderer with Apply/Copy buttons, session persistence, plan strip showing tools used, **📋 Prompts panel** (platform-specific prompts across 9 categories using real service names). |
 
 ---
 
@@ -678,18 +678,19 @@ Open `http://localhost:8765/chat` in your browser.
 
 ### 📋 Sample Prompts Panel
 
-Click the **📋 Prompts** button to open a slide-in panel with 50 ready-to-use prompt templates across 8 categories:
+Click the **📋 Prompts** button to open a slide-in panel with ready-to-use prompt templates across 9 categories. All prompts use real service names from the indexed codebase (ms-java-appointments, ms-java-order, ms-java-sites, etc.) and real Angular modules (BookAppointmentSlotModule, ActivityLogModule, SolutionHubModule, etc.):
 
 | Category | Mode | Examples |
 |---|---|---|
-| 🏗️ Architecture | chat | Platform overview, service deep dive, auth flow, data model |
-| 🔁 End-to-End Flows | deep | Feature trace, module trace, endpoint trace, Kafka event flow |
-| ⚡ Impact Analysis | impact | Entity/DTO/endpoint change blast radius, shared module impact |
-| 📋 API & Schema | chat | DTO field structure, Feign client details, auth-required endpoints |
-| 🎯 Solution Design | deep | New feature design, entity design, event-driven integration |
-| ⚙️ New Feature / AC | generate | New endpoint, Feign client, CRUD, validation, Kafka publisher, tests |
-| 🔍 Debugging | deep/chat | Root cause, error handling, Feign failure, missing data |
-| 📖 Code Review | chat | Explain a class, method call graph, controller walkthrough |
+| 🏗️ Architecture | chat | Platform services map, appointments service overview, auth flow, Kafka topology |
+| 🔁 End-to-End Flows | deep | Book Appointment full flow, Activity Log UI-to-API, Order creation, Site designer, tenancy creation |
+| 📋 Backend API Docs | chat/generate | ms-java-appointments endpoints, order API reference, generate full API contract |
+| 🌐 External APIs | chat/deep | Appointments downstream Feign calls, all-platform external calls, OAuth scope inventory |
+| 🧠 Business Logic | deep | Appointment availability logic, order processing, notification dispatch, strategy/delegate pattern |
+| 🗄️ MongoDB & Data | chat/generate | Collections per service, MongoTemplate Criteria queries, repository methods, generate schema doc |
+| 📊 Data Models & Docs | chat/generate | API + data model combined doc, Angular-to-backend API map, DTO field tables, OpenAPI-style spec |
+| ⚡ Impact Analysis | impact | MongoDB document change, endpoint change, DTO field change, Kafka topic rename, service extraction |
+| ⚙️ Code Generation | generate | New endpoint, Feign client, MongoDB document+repository, Kafka publisher, Angular service, full feature scaffold |
 
 Clicking a prompt: fills the textarea, sets the correct mode, and selects the first `[PLACEHOLDER]` so you can type the real value immediately. Press `Escape` to dismiss.
 

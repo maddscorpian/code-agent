@@ -59,7 +59,30 @@ Answer the developer's question using ONLY the gathered context above.
 - Reference actual class names, file paths, and method names exactly as they appear in the context.
 - Do not use general knowledge about Angular or Spring Boot to fill in missing details.
 - If a specific class, method, endpoint, or field is not in the gathered context, say it was not found in the index — do not guess.
-- If the context is thin or off-topic, say so and suggest reindexing or rephrasing.\
+- If the context is thin or off-topic, say so and suggest reindexing or rephrasing.
+
+For API / endpoint documentation questions, format your answer as:
+
+  **Endpoint:** `[METHOD] [path]`
+  **Controller:** ClassName (project)
+  **Auth:** @EntitlementOrRoleBasedAuthorisation context or "none"
+  **Request DTO:** ClassName → list fields with types
+  **Response DTO:** ClassName → list fields with types
+
+For DTO / data model questions, include a field table:
+  | Field | Type | Required | Validation | Notes |
+  |-------|------|----------|------------|-------|
+
+For external/downstream service questions, include for each Feign client:
+  **Client:** FeignClientName → resolved URL (from application.properties)
+  **OAuth scope:** @AuthorizationToken scope value (if present)
+  **Calls:**
+    - [METHOD] path — Request: DTOName, Response: DTOName
+
+For MongoDB collection / data model questions:
+  **Collection:** name (from @Document annotation)
+  | Field | Java Type | Required | DB Ref / Relationship |
+  |-------|-----------|----------|-----------------------|\
 """,
 
     "deep": """\
@@ -68,61 +91,116 @@ Provide a deep, evidence-backed answer using ONLY the gathered context. Cite [SO
 Structure your answer using these layers (only include layers that appear in the context):
 
 1. **Direct answer** — 2-3 sentences naming the exact classes involved
-2. **Angular layer** — component name → Angular service → HTTP call (method + URL). Note if call goes through a base service class (override loadMany/loadOne pattern).
-3. **Controller layer** — controller class, project, endpoint path, @EntitlementOrRoleBasedAuthorisation context if present, request/response DTOs
-4. **Strategy/Delegate layer** — if strategyFactory.getStrategy() pattern present, name the Delegate class that handles the request
-5. **Service implementation** — ServiceImpl class, its Lombok @RequiredArgsConstructor dependencies (private final fields), which Feign clients it calls (client-api.xxx.baseurl URL), @AuthorizationToken OAuth scope per downstream call, custom exception types
-6. **Repository/Database layer** — MongoRepository derived method or MongoTemplate Criteria query, @Document collection name (with resolved db.collection.suffix)
-7. **Kafka events** — topic from spring.kafka.consumer.topic property, EventModel event types dispatched, producer/consumer class names
-8. **Cross-service interactions** — all Feign clients called, their resolved URLs, downstream services triggered
-9. **Context gaps** — explicitly state which layers you could NOT find context for
+
+2. **Angular layer**
+   - Component: name, file path, injected services
+   - Angular service: HTTP method + URL (resolved via override apiItemsUrl() or API_SLUGS constant)
+   - Note if call goes through a base service class (override loadMany/loadOne/save pattern)
+
+3. **Controller layer**
+   - Controller class name, project (e.g. ms-java-appointments)
+   - Endpoint: `[METHOD] /path`
+   - Auth: @EntitlementOrRoleBasedAuthorisation context if present, or "no auth annotation found"
+   - Request DTO → Response DTO (with key fields if available in context)
+
+4. **Strategy/Delegate layer** (if applicable)
+   - strategyFactory.getStrategy() call and which Delegate class handles the request
+
+5. **Service implementation**
+   - ServiceImpl class (Lombok @RequiredArgsConstructor — list private final field dependencies)
+   - Method logic summary from method_body if available in sources
+
+6. **External service calls** (Feign downstream)
+   For each Feign client called by the service:
+   - Client name → resolved URL (client-api.<name>.baseurl from application.properties)
+   - Endpoint called: `[METHOD] /path`
+   - Request DTO fields sent → Response DTO fields received
+   - OAuth scope: @AuthorizationToken scope value
+   - Classification: [internal] if target is another indexed microservice, [external] if third-party
+
+7. **Repository / Database layer**
+   - Repository class: MongoRepository derived method OR MongoTemplate Criteria.where() chain
+   - Collection: @Document name (with db.collection.suffix resolved)
+   - Query logic from method body if available
+
+8. **Kafka events** (if applicable)
+   - Topic name from spring.kafka.consumer.topic property value
+   - EventModel event types dispatched (if switch/dispatch pattern visible in sources)
+   - Producer or consumer class name
+
+9. **Context gaps** — explicitly list which layers you could NOT find context for
 
 Rules:
 - Cite [SOURCE N] for every class name, method name, or endpoint you reference
-- If method_body or method_call_graph data is in the sources, use it to describe actual logic
-- If a layer is missing, write "Context not retrieved for [layer] — rephrase or reindex"
-- Never invent class names, method names, or property values not present in the sources\
+- Use method_body / method_call_graph from sources to describe actual logic — not generalizations
+- If a layer is missing from context: write "Not retrieved — rephrase or add [layer] keywords"
+- Never invent class names, method names, property values, or DTO fields not in the sources\
 """,
 
     "generate": """\
-Produce implementation-ready output. Use EXACTLY this structure so the output can be applied automatically:
+Produce implementation-ready output. Use EXACTLY this structure:
 
-For each file to MODIFY (existing file — add/change methods, fields, annotations):
-  ### FILE: <relative-path-from-project-root> [MODIFY]
-  ```diff
-  --- a/<relative-path>
-  +++ b/<relative-path>
-  @@ -<old-line>,<old-count> +<new-line>,<new-count> @@
-   <3 context lines before change>
-  -<line being removed>
-  +<line being added>
-   <3 context lines after change>
-  ```
+For DATA MODEL / API CONTRACT generation (when asked for docs, schemas, or OpenAPI):
+  ### API Contract: [ServiceName]
+  **Base URL:** <resolved from application.properties>
 
-For each NEW file to CREATE:
-  ### FILE: <relative-path-from-project-root> [CREATE]
-  ```<java|typescript|sql>
-  <complete file content>
-  ```
+  #### [METHOD] /path
+  **Auth:** @EntitlementOrRoleBasedAuthorisation context or none
+  **Request Body:** DTOName
+  | Field | Type | Required | Validation |
+  |-------|------|----------|------------|
+  **Response:** DTOName
+  | Field | Type | Notes |
+  |-------|------|-------|
+
+  ### MongoDB Data Model
+  **Collection:** name
+  | Field | Java Type | @DBRef | Notes |
+  |-------|-----------|--------|-------|
+
+For CODE GENERATION (new files, modifications):
+  For each file to MODIFY:
+    ### FILE: <relative-path-from-project-root> [MODIFY]
+    ```diff
+    --- a/<relative-path>
+    +++ b/<relative-path>
+    @@ -<old-line>,<old-count> +<new-line>,<new-count> @@
+     <3 context lines before>
+    -<removed line>
+    +<added line>
+     <3 context lines after>
+    ```
+
+  For each NEW file:
+    ### FILE: <relative-path-from-project-root> [CREATE]
+    ```<java|typescript|sql>
+    <complete file content>
+    ```
 
 Rules:
-- Use the exact package names, imports, annotations, and naming from the gathered context
-- Include at least 3 context lines (space-prefixed) around each diff hunk
-- Generate a matching test class in src/test/… for any new service/controller method
-- After all FILE sections, add a short ## Impact summary listing downstream services/components
-- For any new endpoint: also add the matching Flyway migration if a new column or table is needed\
+- Use exact package names, imports, annotations from gathered context
+- Follow Lombok pattern: @RequiredArgsConstructor + private final fields (no explicit constructor)
+- Use MongoRepository / MongoTemplate patterns, not JPA
+- Use Feign client pattern with client-api.<name>.baseurl URL convention
+- Use @AuthorizationToken for OAuth-secured Feign clients
+- Match existing exception handling patterns (custom *FeignClientException types)
+- After all FILE sections, add ## Impact summary listing downstream services/components impacted\
 """,
 
     "impact": """\
-Provide a structured impact analysis:
-1. Direct files impacted (list each with reason)
-2. Spring Boot services impacted (controllers, service beans, repositories, entities)
-3. Angular components and services impacted
-4. API contract changes (new/removed endpoints, request/response shape changes)
-5. DB schema changes and required migrations
-6. Auth/security changes (roles, permit-all rules, JWT claims)
-7. Kafka/RabbitMQ event schema or topic changes
-8. Risk level: LOW / MEDIUM / HIGH — with specific justification\
+Provide a structured impact analysis using ONLY information from the gathered context:
+
+1. **Direct files impacted** — list each with specific reason from context
+2. **Spring Boot services** — controllers, service beans, repositories, MongoDB documents affected
+3. **Angular components and services** — pan-portal components and HTTP service calls affected
+4. **API contract changes** — new/removed/modified endpoints, request/response shape changes
+5. **MongoDB collection changes** — new collections, document field additions/removals, index changes
+6. **Auth/security changes** — @EntitlementOrRoleBasedAuthorisation context changes, OAuth scope changes
+7. **Kafka event changes** — topic name changes, EventModel payload changes, new producer/consumer
+8. **Feign client changes** — URL changes, new downstream calls, DTO changes in Feign interfaces
+9. **Risk level:** LOW / MEDIUM / HIGH — with specific justification from the indexed context
+
+If the gathered context does not cover a layer above, state "Not enough context retrieved for [layer]".\
 """,
 }
 

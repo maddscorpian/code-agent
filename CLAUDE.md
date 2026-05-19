@@ -111,7 +111,11 @@ question → Planner LLM call (picks 3–6 tools)
 
 **Feign URL resolution:** `_build_properties_map()` loads `application.properties`/`.yml`. Feign `url = "${ms-java.appointments.url}"` is resolved to the actual host value during `_parse_feign()`.
 
-**Planner fallback (`agent/planner.py`):** If the LLM returns invalid JSON, `_default_plan()` applies keyword rules. Adding a new tool requires: (1) function + registration in `agent/tools.py`, (2) entry in `TOOL_CATALOGUE` in `agent/planner.py`, (3) planning guideline in `PLANNER_PROMPT`.
+**Planner fallback (`agent/planner.py`):** If the LLM returns invalid JSON, `_default_plan()` applies keyword rules. Adding a new tool requires: (1) function + registration in `agent/tools.py`, (2) entry in `TOOL_CATALOGUE` in `agent/planner.py`, (3) planning guideline in `PLANNER_PROMPT`. New use-case routing added: "api reference/documentation/contract" → `get_all_endpoints + get_dto_schema + get_external_calls`; "data model/schema/collections" → `get_entity_schema + search_deep`; "business logic/what happens when/logic in" → `get_method_implementation + get_method_calls + search_deep`; end-to-end deep mode questions also call `get_external_calls` to expose the full Feign downstream layer.
+
+**Synthesis output formats (`agent/loop.py` `_SYNTHESIS_SUFFIX`):** Each mode has a structured output format. `chat` mode: if question is about endpoints/DTOs, format as endpoint documentation table + DTO field table; if about Feign/external calls, format per-client with URL/scope/endpoint table; if about MongoDB, format as collection + field table. `deep` mode: 9-layer structure (Angular → Controller → Strategy/Delegate → Service impl → External service calls [internal/external] → Repository/DB → Kafka events → Context gaps). `generate` mode: supports both DATA MODEL/API CONTRACT generation (markdown table format) and CODE GENERATION (diff format). `impact` mode: 9-point list including MongoDB collection changes and Feign client changes.
+
+**Sample prompts panel (`api/static/chat.html`):** 9 platform-specific categories using real indexed service names (ms-java-appointments, ms-java-order, ms-java-sites, ms-java-tenancy, ms-java-identity, ms-java-customers, etc.) and real Angular modules (BookAppointmentSlotModule, ActivityLogModule, SolutionHubModule, SiteDesignerPageModule). Categories: Architecture, End-to-End Flows, Backend API Docs, External APIs, Business Logic, MongoDB & Data, Data Models & Docs, Impact Analysis, Code Generation.
 
 ## Chunker ID scheme
 
