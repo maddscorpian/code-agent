@@ -438,7 +438,8 @@ class SpringBootParser:
         order_m = re.search(r'OrderBy[A-Z].*$', remainder)
         order_clause = ""
         if order_m:
-            order_clause = f" ORDER BY {re.sub(r'([A-Z])', r' \1', order_m.group(0)[7:]).lower().strip()}"
+            order_text = re.sub(r'([A-Z])', r' \1', order_m.group(0)[7:]).lower().strip()
+            order_clause = f" ORDER BY {order_text}"
             remainder = remainder[:order_m.start()]
 
         # Split on And / Or (keep delimiter)
@@ -467,11 +468,12 @@ class SpringBootParser:
                 "True": "= true", "False": "= false",
                 "Containing": "LIKE %?%", "StartingWith": "LIKE ?%", "EndingWith": "LIKE %?",
             }
-            condition = f"{re.sub(r'([A-Z])', r'_\1', field).lstrip('_').lower()} = ?"
+            col_name = re.sub(r'([A-Z])', r'_\1', field).lstrip('_').lower()
+            condition = f"{col_name} = ?"
             for suffix, sql in _SUFFIX_MAP.items():
                 if field.endswith(suffix):
-                    col = re.sub(r'([A-Z])', r'_\1', field[:-len(suffix)]).lstrip('_').lower()
-                    condition = f"{col} {sql}"
+                    col_name2 = re.sub(r'([A-Z])', r'_\1', field[:-len(suffix)]).lstrip('_').lower()
+                    condition = f"{col_name2} {sql}"
                     break
 
             conditions.append(condition + connector)
