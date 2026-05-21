@@ -13,10 +13,17 @@ from embeddings.embedder import Embedder
 from embeddings.vector_store import VectorStore
 
 load_dotenv()
-ROOT = Path(__file__).resolve().parents[1]
-DIGESTS = ROOT / os.getenv("DIGESTS_PATH", "./digests")
-GRAPH_FILE = ROOT / "graph" / "knowledge_graph.json"
-LOADER = ProjectLoader(os.getenv("PROJECTS_CONFIG", str(ROOT / "projects.yaml")))
+_REPO_ROOT = Path(__file__).resolve().parents[1]
+_data_root_env = os.getenv("AGENT_DATA_ROOT", "")
+ROOT = Path(_data_root_env).resolve() if _data_root_env else _REPO_ROOT
+
+_digests_env = os.getenv("DIGESTS_PATH", "")
+DIGESTS = Path(_digests_env).resolve() if _digests_env and Path(_digests_env).is_absolute() else ROOT / (os.getenv("DIGESTS_PATH", "digests"))
+
+_graph_env = os.getenv("GRAPH_PATH", "")
+GRAPH_FILE = Path(_graph_env).resolve() if _graph_env and Path(_graph_env).is_absolute() else ROOT / "graph" / "knowledge_graph.json"
+
+LOADER = ProjectLoader(os.getenv("PROJECTS_CONFIG", str(_REPO_ROOT / "projects.yaml")))
 
 # Lazy-loaded graph store singleton
 _graph_store = None

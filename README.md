@@ -438,12 +438,15 @@ The defaults work for a standard local setup. Review:
 OLLAMA_HOST=http://localhost:11434
 OLLAMA_MODEL=deepseek-coder-v2
 OLLAMA_EMBED_MODEL=nomic-embed-text
-CHROMA_PATH=./vector_db
-DIGESTS_PATH=./digests
-PROJECTS_CONFIG=./projects.yaml
+PROJECTS_CONFIG=./projects.yaml   # path to your projects registry
 API_PORT=8765
 LOG_LEVEL=INFO
-TIKTOKEN_CACHE_DIR=./tiktoken_cache
+
+# Optional: set AGENT_DATA_ROOT to point at pre-generated context from another machine
+# AGENT_DATA_ROOT=/absolute/path/to/context
+CHROMA_PATH=./vector_db
+DIGESTS_PATH=./digests
+# GRAPH_PATH=./graph/knowledge_graph.json
 ```
 
 > **Do not change `OLLAMA_EMBED_MODEL` after your first index.** Vectors are tied to the embedding model — switching requires deleting `vector_db/` and re-indexing from scratch.
@@ -552,11 +555,13 @@ Then open `http://localhost:8765/chat` and ask:
 | Variable | Default | Description |
 |---|---|---|
 | `OLLAMA_HOST` | `http://localhost:11434` | Ollama API URL |
-| `OLLAMA_MODEL` | `deepseek-coder-v2` | LLM for Q&A and generation. Initialised with `num_ctx=16384`, `temperature=0.15`, `top_p=0.95` (hardcoded in `agent/agent_core.py`) |
+| `OLLAMA_MODEL` | `deepseek-coder-v2` | LLM for Q&A and generation |
 | `OLLAMA_EMBED_MODEL` | `nomic-embed-text` | Embedding model — do not change after first index |
-| `CHROMA_PATH` | `./vector_db` | ChromaDB directory (auto-created) |
-| `DIGESTS_PATH` | `./digests` | Digest output directory (auto-created) |
-| `PROJECTS_CONFIG` | `./projects.yaml` | Path to projects registry |
+| `PROJECTS_CONFIG` | `./projects.yaml` | Path to projects registry (always relative to repo root) |
+| `AGENT_DATA_ROOT` | _(repo root)_ | Override base directory for all generated data (digests, graph, vector_db). Set to an absolute path to load pre-generated context from another machine. |
+| `CHROMA_PATH` | `./vector_db` | ChromaDB directory — resolved relative to `AGENT_DATA_ROOT` if set |
+| `DIGESTS_PATH` | `./digests` | Digest output directory — resolved relative to `AGENT_DATA_ROOT` if set |
+| `GRAPH_PATH` | `./graph/knowledge_graph.json` | Knowledge graph file — resolved relative to `AGENT_DATA_ROOT` if set |
 | `API_PORT` | `8765` | FastAPI server port |
 | `LOG_LEVEL` | `INFO` | Python logging level (`DEBUG`, `INFO`, `WARNING`) |
 | `TIKTOKEN_CACHE_DIR` | `./tiktoken_cache` | Cache for tiktoken tokeniser files |

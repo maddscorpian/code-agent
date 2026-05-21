@@ -25,7 +25,13 @@ from embeddings.embedder import Embedder
 from embeddings.vector_store import VectorStore
 
 load_dotenv()
-ROOT = Path(__file__).resolve().parents[1]
+# REPO_ROOT: always the directory containing this repo (never changes).
+REPO_ROOT = Path(__file__).resolve().parents[1]
+# DATA_ROOT: where digests/, graph/, vector_db/ live.
+# Set AGENT_DATA_ROOT in .env to decouple data from code (e.g. pre-generated context).
+_data_root_env = os.getenv("AGENT_DATA_ROOT", "")
+ROOT = Path(_data_root_env).resolve() if _data_root_env else REPO_ROOT
+
 app = FastAPI(title="Local AI Agent")
 app.middleware("http")(request_logger)
 app.add_middleware(
@@ -37,14 +43,19 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+_graph_path = os.getenv("GRAPH_PATH", str(ROOT / "graph" / "knowledge_graph.json"))
+_chroma_path = os.getenv("CHROMA_PATH", str(ROOT / "vector_db"))
+_digests_path = os.getenv("DIGESTS_PATH", str(ROOT / "digests"))
+_projects_config = os.getenv("PROJECTS_CONFIG", str(REPO_ROOT / "projects.yaml"))
+
 agent_core = AgentCore()
 session_store = SessionStore()
-graph_store = GraphStore(str(ROOT / "graph" / "knowledge_graph.json"))
-runner = DigestRunner(os.getenv("PROJECTS_CONFIG", str(ROOT / "projects.yaml")))
-store = VectorStore(os.getenv("CHROMA_PATH", "./vector_db"))
+graph_store = GraphStore(_graph_path)
+runner = DigestRunner(_projects_config)
+store = VectorStore(_chroma_path)
 embedder = Embedder()
-loader = ProjectLoader(os.getenv("PROJECTS_CONFIG", str(ROOT / "projects.yaml")))
-CHAT_HTML = ROOT / "api" / "static" / "chat.html"
+loader = ProjectLoader(_projects_config)
+CHAT_HTML = REPO_ROOT / "api" / "static" / "chat.html"
 
 
 @app.get("/")
@@ -62,7 +73,7 @@ def chat_ui():
 @app.get("/api-catalog")
 def get_api_catalog():
     """Return the OpenAPI 3.0 catalog generated during last reindex."""
-    catalog_path = ROOT / "api-catalog" / "openapi.json"
+    catalog_path = ROOT / "api-catalog" / "openapi.json"  # ROOT = AGENT_DATA_ROOT or repo root
     if not catalog_path.exists():
         return {"error": "API catalog not built yet. Run POST /reindex first."}
     return json.loads(catalog_path.read_text(encoding="utf-8"))
@@ -148,7 +159,7 @@ def reindex(req: ReindexRequest):
     else:
         runner.run_all()
         projects = [p.name for p in loader.list_projects()]
-    chunks = Chunker(str(ROOT)).build_chunks()
+    chunks = Chunker(str(ROOT)).build_chunks()  # ROOT = AGENT_DATA_ROOT
     embedded = embedder.embed_chunks(chunks)
     store.upsert(embedded)
     # Reload the graph store singleton and the tools graph cache after reindex
@@ -168,7 +179,7 @@ def reindex(req: ReindexRequest):
 
 @app.get("/digest", response_model=DigestResponse)
 def digest_summary():
-    digests = sorted((ROOT / "digests").glob("*.digest.json"))
+    digests = sorted(Path(_digests_path).glob("*.digest.json"))
     projects = []
     endpoints = 0
     entities = 0
@@ -272,7 +283,7 @@ def apply_file(body: dict):
 @app.get("/graph")
 def graph_data():
     """Return the full knowledge graph JSON for visualization or inspection."""
-    graph_file = ROOT / "graph" / "knowledge_graph.json"
+    graph_file = Path(_graph_path)
     if not graph_file.exists():
         return {"error": "Graph not built yet. Run /reindex first.", "nodes": {}, "edges": []}
     return json.loads(graph_file.read_text(encoding="utf-8"))

@@ -39,11 +39,13 @@ The actual indexed codebase uses these patterns — they are documented in `SYST
 ## Required environment
 
 - `projects.yaml` — registers the codebases to index (absolute paths, `angular` or `spring-boot` type)
-- `.env` — copy from `.env.example`; key vars: `OLLAMA_MODEL`, `OLLAMA_EMBED_MODEL`, `CHROMA_PATH`
+- `.env` — copy from `.env.example`; key vars: `OLLAMA_MODEL`, `OLLAMA_EMBED_MODEL`, `PROJECTS_CONFIG`
 - Ollama daemon running with `deepseek-coder-v2` and `nomic-embed-text` pulled
 - Python 3.11/3.12 with `pip install -r requirements.txt`
 
 **Do not change `OLLAMA_EMBED_MODEL` after first index** — embedding dimensions are baked into ChromaDB and cannot be mixed.
+
+**Data path configuration (`AGENT_DATA_ROOT`):** By default the agent stores digests, graph, and vector DB inside the repo directory. Set `AGENT_DATA_ROOT=/absolute/path` in `.env` to decouple the generated context from the code — useful when indexing is done on a separate machine and the context is copied over. Individual overrides are also available: `CHROMA_PATH`, `DIGESTS_PATH`, `GRAPH_PATH`. `PROJECTS_CONFIG` always defaults to `projects.yaml` in the repo root and is not affected by `AGENT_DATA_ROOT`.
 
 ## Architecture: the full pipeline
 
