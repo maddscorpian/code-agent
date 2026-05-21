@@ -81,11 +81,12 @@ def get_all_endpoints(service_name: str) -> str:
     if not p.exists():
         return f"Missing digest for {service_name}"
     data = json.loads(p.read_text(encoding="utf-8"))
-    rows = ["METHOD | PATH | AUTH | ROLES | HANDLER"]
+    rows = ["METHOD | PATH | AUTH | ROLES | REQUEST_DTO | RESPONSE_DTO | HANDLER"]
     for ep in data.get("endpoints", []):
         rows.append(
             f"{ep['method']} | {ep['path']} | {ep.get('auth_required')} | "
-            f"{','.join(ep.get('roles', []))} | {ep.get('handler', '')}"
+            f"{','.join(ep.get('roles', []))} | {ep.get('request_dto') or ''} | "
+            f"{ep.get('response_dto') or ''} | {ep.get('handler', '')}"
         )
     # Also list beans
     beans = data.get("beans", [])

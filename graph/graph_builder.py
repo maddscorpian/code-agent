@@ -127,6 +127,8 @@ class GraphBuilder:
                 "handler": ep.get("handler", ""),
                 "auth_required": ep.get("auth_required", False),
                 "roles": ep.get("roles", []),
+                "request_dto": ep.get("request_dto") or "",
+                "response_dto": ep.get("response_dto") or "",
                 "label": f"Endpoint {ep['method']} {ep['path']} [{project}]",
             }
 
@@ -483,8 +485,11 @@ class GraphBuilder:
         for part in parts:
             if part.startswith("/"):
                 return part
-        # Already a path
+        # Already a path (with or without leading slash)
         if url.startswith("/"):
+            return url
+        # Relative path like 'v1/appointments' — treat as-is for suffix matching
+        if re.match(r"^[a-zA-Z0-9_\-]+/", url):
             return url
         return ""
 
