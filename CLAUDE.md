@@ -113,6 +113,8 @@ question → Planner LLM call (picks 3–6 tools)
 
 **Feign URL resolution:** `_build_properties_map()` loads `application.properties`/`.yml`. Feign `url = "${ms-java.appointments.url}"` is resolved to the actual host value during `_parse_feign()`.
 
+**Bare mapping annotations (`digest/springboot_parser.py`):** `_parse_controllers()` `method_pattern` makes the parentheses optional: `(?:\(([\s\S]*?)\))?`. A bare `@GetMapping` (no parens) maps to the class-level base URL — these are "list all" endpoints (e.g. `GET /private_api/v1/tenancies`). Without this, all bare-annotation endpoints were silently dropped. `ann_name` detection was also updated to `@([A-Za-z]+)` (without requiring `(`).
+
 **Endpoint DTO extraction (`digest/springboot_parser.py`):** `_extract_request_body_type()` uses `@RequestBody\s+(?:@\w+\s+)*(?:final\s+)?` to skip modifiers (`@Valid`, `final`) before capturing the DTO class name. `_parse_controllers()` unwraps `ResponseEntity<X>` / `List<X>` / `Optional<X>` from the return type before storing `response_dto` — same unwrapping already done for Feign clients.
 
 **Graph endpoint suffix matching (`graph/graph_builder.py`):** `_find_endpoint_fuzzy()` uses suffix matching after the exact `_norm_path` match fails — if either normalized path ends with the other, the match succeeds. This handles Angular services that use paths like `v1/appointments` matching Spring endpoints at `/private_api/v1/appointments` without requiring the caller to know the API gateway prefix.

@@ -584,8 +584,9 @@ class SpringBootParser:
         class_body = text[body_start:]
 
         method_pattern = re.compile(
-            # Mapping annotation with multi-line args
-            r"(@(?:GetMapping|PostMapping|PutMapping|DeleteMapping|PatchMapping|RequestMapping)\(([\s\S]*?)\))"
+            # Mapping annotation — parens are optional (bare @GetMapping means path = class base URL)
+            r"(@(?:GetMapping|PostMapping|PutMapping|DeleteMapping|PatchMapping|RequestMapping)"
+            r"(?:\(([\s\S]*?)\))?)"
             # Skip any other annotations between mapping and method signature (e.g. @Timed, @Override)
             r"(?:\s*@(?!(?:Get|Post|Put|Delete|Patch)Mapping|Rest|Controller|RequestMapping\b)[^\n]*)*\s*"
             # Method signature: return type + method name + params (may span multiple lines)
@@ -594,9 +595,11 @@ class SpringBootParser:
         )
         for m in method_pattern.finditer(class_body):
             ann_block, ann_args, _sig, response_type, handler, params = m.groups()
+            ann_args = ann_args or ""  # None when bare @GetMapping with no parens
             # Include 200 chars before the match in class_body to catch @PreAuthorize above the mapping
             context = class_body[max(0, m.start() - 200): m.end()]
-            ann_name = re.search(r"@([A-Za-z]+)\(", ann_block)
+            # Handle both @GetMapping(...) and bare @GetMapping (no parens)
+            ann_name = re.search(r"@([A-Za-z]+)", ann_block)
             ann = ann_name.group(1) if ann_name else "RequestMapping"
             http_method = HTTP_ANN_TO_METHOD.get(ann, "GET")
             if ann == "RequestMapping":

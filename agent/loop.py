@@ -97,9 +97,10 @@ For DTO / data model questions, include a field table:
   | Field | Type | Required | Validation | Notes |
   |-------|------|----------|------------|-------|
 
-For external/downstream service questions, include for each Feign client:
+For external/downstream service questions, list EVERY Feign client present in [Gathered N] — do not skip any.
+For each client use this format:
   **Client:** FeignClientName → resolved URL (from application.properties)
-  **OAuth scope:** @AuthorizationToken scope value (if present)
+  **OAuth scope:** @AuthorizationToken scope value (or "none" if absent)
   **Calls:**
     - [METHOD] path — Request: DTOName, Response: DTOName
 

@@ -83,10 +83,11 @@ def get_all_endpoints(service_name: str) -> str:
     data = json.loads(p.read_text(encoding="utf-8"))
     rows = ["METHOD | PATH | AUTH | ROLES | REQUEST_DTO | RESPONSE_DTO | HANDLER"]
     for ep in data.get("endpoints", []):
+        auth_label = "secured" if ep.get("auth_required") else "public"
         rows.append(
-            f"{ep['method']} | {ep['path']} | {ep.get('auth_required')} | "
-            f"{','.join(ep.get('roles', []))} | {ep.get('request_dto') or ''} | "
-            f"{ep.get('response_dto') or ''} | {ep.get('handler', '')}"
+            f"{ep['method']} | {ep['path']} | {auth_label} | "
+            f"{','.join(ep.get('roles', []))} | {ep.get('request_dto') or '-'} | "
+            f"{ep.get('response_dto') or '-'} | {ep.get('handler', '')}"
         )
     # Also list beans
     beans = data.get("beans", [])
