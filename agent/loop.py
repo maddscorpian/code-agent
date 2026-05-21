@@ -369,7 +369,18 @@ class AgentLoop:
 
         tool_results = self._execute(plan.tool_calls)
         prompt = _synthesis_prompt(question, mode, tool_results, file_context, history or [])
-        answer = str(self.llm.invoke(prompt))
+
+        # Isolate the synthesis LLM call — a failure here should NOT discard
+        # the tool results or cause the caller to fall back to RAGChain.
+        try:
+            answer = str(self.llm.invoke(prompt))
+        except Exception as exc:
+            logger.warning("Synthesis LLM invoke failed: %s", exc)
+            answer = (
+                f"[Synthesis failed: {exc}]\n\n"
+                "The tools ran successfully (see tools_used). "
+                "Try the streaming endpoint /ask/stream for a more reliable response."
+            )
 
         return {
             "answer": answer,

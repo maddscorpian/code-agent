@@ -19,58 +19,76 @@ curl -s http://localhost:8765/graph/summary | python3 -m json.tool
 
 ## How to run tests
 
-### Option A — Chat UI (recommended, shows tools visually)
+### Option A — Chat UI (recommended)
 
-Open `http://localhost:8765/chat` in a browser. The "Gathered via: [tool1, tool2, ...]"
-strip above each response shows which tools ran. Paste each question, set the mode, send.
+Open `http://localhost:8765/chat`. The "Gathered via: [tool1, tool2, ...]" strip above
+each response shows which tools ran. Paste the question, set the mode, send.
 
-### Option B — curl to /ask (non-streaming, returns full JSON)
+### Option B — Streaming endpoint (same as chat.html uses)
 
-Pipe curl output directly to `python3 -c "..."`. Use double quotes for the `-c` argument —
-single quotes inside a double-quoted shell string are valid and do not need escaping.
-Do NOT use heredoc (`<< 'PYEOF'`) — it conflicts with the pipe for stdin.
+The `/ask/stream` endpoint is what the chat UI uses internally. It reliably runs the
+AgentLoop and streams tools + answer. Use this for curl testing.
 
-```bash
-curl -s -X POST http://localhost:8765/ask \
-  -H "Content-Type: application/json" \
-  -d '{"question": "...", "mode": "deep", "session_id": "t1"}' \
-  | python3 -c "
-import sys, json
-d = json.load(sys.stdin)
-tools = [t.get('tool') for t in d.get('tools_used', [])]
-print('Tools:', tools if tools else 'NONE - check server log for AgentLoop.run failed')
-print()
-print(d.get('answer', ''))
-"
-```
-
-### Option C — curl to /ask/stream (streaming, shows tool progress in real time)
+The command below pipes the SSE stream through a python parser that prints the tools
+used (from the `event: plan` line) and then the full answer:
 
 ```bash
 curl -s -N -X POST http://localhost:8765/ask/stream \
   -H "Content-Type: application/json" \
   -d '{"question": "...", "mode": "deep", "session_id": "t1"}' \
-  | grep --line-buffered -E "^event:|^data:"
+  | python3 -c "
+import sys, json
+tools = []
+answer = []
+cur_event = ''
+for line in sys.stdin:
+    line = line.rstrip()
+    if line.startswith('event:'):
+        cur_event = line.split(':', 1)[1].strip()
+    elif line.startswith('data:'):
+        data = line.split(':', 1)[1].strip()
+        if cur_event == 'plan':
+            try:
+                tools = json.loads(data).get('tools', [])
+            except Exception:
+                pass
+        elif cur_event not in ('progress', 'done', 'plan'):
+            answer.append(data)
+    elif not line:
+        cur_event = ''
+print('Tools:', tools if tools else 'EMPTY - check server log')
+print()
+print(''.join(answer))
+"
 ```
 
-Prints `event: progress` lines showing each tool as it runs, then `event: plan` showing
-which tools were selected, then the answer tokens as `data:` lines.
+> **Why not `/ask`?** The non-streaming `/ask` endpoint uses `llm.invoke()` which may
+> fail with a connection or timeout error on large prompts, causing a silent fallback to
+> RAGChain (no tools, weaker answer). `/ask/stream` uses `llm.stream()` which stays
+> open and is the same path chat.html takes.
 
 ---
 
 ## Sanity check — is the AgentLoop working?
 
-Run this before the test cases. Tools must not be empty.
+Run this first. Tools must not be empty.
 
 ```bash
-curl -s -X POST http://localhost:8765/ask \
+curl -s -N -X POST http://localhost:8765/ask/stream \
   -H "Content-Type: application/json" \
   -d '{"question":"What services make up this platform?","mode":"chat","session_id":"sanity"}' \
   | python3 -c "
 import sys, json
-d = json.load(sys.stdin)
-tools = [t.get('tool') for t in d.get('tools_used', [])]
-print('PASS - Tools:', tools) if tools else print('FAIL - Tools empty. Run: git pull && restart server')
+for line in sys.stdin:
+    if line.startswith('event: plan'):
+        pass
+    elif line.startswith('data:') and 'tools' in line:
+        try:
+            data = json.loads(line.split(':', 1)[1].strip())
+            tools = data.get('tools', [])
+            print('PASS - Tools:', tools) if tools else print('FAIL - Tools empty. Run: git pull && restart server')
+        except Exception:
+            pass
 "
 ```
 
@@ -91,7 +109,7 @@ service impl, downstream Feign calls, MongoDB collection.
 
 **curl:**
 ```bash
-curl -s -X POST http://localhost:8765/ask \
+curl -s -N -X POST http://localhost:8765/ask/stream \
   -H "Content-Type: application/json" \
   -d '{
     "question": "For BookAppointmentSlotModule give me end-to-end call details from UI to API to repositories. Include Angular component, Angular service, HTTP URL, controller, service impl, downstream Feign calls, MongoDB collection.",
@@ -99,10 +117,27 @@ curl -s -X POST http://localhost:8765/ask \
     "session_id": "t1"
   }' | python3 -c "
 import sys, json
-d = json.load(sys.stdin)
-print('Tools:', [t.get('tool') for t in d.get('tools_used', [])])
+tools = []
+answer = []
+cur_event = ''
+for line in sys.stdin:
+    line = line.rstrip()
+    if line.startswith('event:'):
+        cur_event = line.split(':', 1)[1].strip()
+    elif line.startswith('data:'):
+        data = line.split(':', 1)[1].strip()
+        if cur_event == 'plan':
+            try:
+                tools = json.loads(data).get('tools', [])
+            except Exception:
+                pass
+        elif cur_event not in ('progress', 'done', 'plan'):
+            answer.append(data)
+    elif not line:
+        cur_event = ''
+print('Tools:', tools)
 print()
-print(d.get('answer', ''))
+print(''.join(answer))
 "
 ```
 
@@ -113,7 +148,7 @@ print(d.get('answer', ''))
 - Controller: `AppointmentController` in `ms-java-appointments`, path `/private_api/v1/appointments/slot-enquiry`
 - Service: `AppointmentServiceImpl` with Lombok deps `AppointmentsRepository`, `AppointmentNotificationService`
 - Feign: `appointmentClient` with real external HTTPS URL, OAuth scope, DTOs `AppointmentSlotEnquiryInput` → `SlotEnquiryResponse`
-- Kafka consumer: `AppointmentWorkerMessageConsumerService` ← `appointment-worker-queue`
+- Kafka: `AppointmentWorkerMessageConsumerService` ← `appointment-worker-queue`
 
 **Fail signs:** `/api/appointments`, invented `bookings` collection, generic auth description
 
@@ -132,7 +167,7 @@ and any Feign downstream calls.
 
 **curl:**
 ```bash
-curl -s -X POST http://localhost:8765/ask \
+curl -s -N -X POST http://localhost:8765/ask/stream \
   -H "Content-Type: application/json" \
   -d '{
     "question": "For PricingSummaryModule give me end-to-end call details from UI to API to repositories. Angular component to Angular service to HTTP URL to controller to service impl to MongoDB and any Feign downstream calls.",
@@ -140,10 +175,27 @@ curl -s -X POST http://localhost:8765/ask \
     "session_id": "t2"
   }' | python3 -c "
 import sys, json
-d = json.load(sys.stdin)
-print('Tools:', [t.get('tool') for t in d.get('tools_used', [])])
+tools = []
+answer = []
+cur_event = ''
+for line in sys.stdin:
+    line = line.rstrip()
+    if line.startswith('event:'):
+        cur_event = line.split(':', 1)[1].strip()
+    elif line.startswith('data:'):
+        data = line.split(':', 1)[1].strip()
+        if cur_event == 'plan':
+            try:
+                tools = json.loads(data).get('tools', [])
+            except Exception:
+                pass
+        elif cur_event not in ('progress', 'done', 'plan'):
+            answer.append(data)
+    elif not line:
+        cur_event = ''
+print('Tools:', tools)
 print()
-print(d.get('answer', ''))
+print(''.join(answer))
 "
 ```
 
@@ -152,7 +204,7 @@ print(d.get('answer', ''))
 **Expected answer contains:**
 - Angular: `PricingSummaryComponent → TenancyService → GET v1/tenancies`
 - Backend: `TenancyServiceImpl` in `ms-java-tenancy`, methods `createTenancy`, `getTenancyData`, `getAllTenanciesList`
-- Context gap stated for controller layer (no http_call edge for this feature in the graph)
+- Context gap stated for controller layer
 
 **Fail signs:** Invents `PricingSummaryServiceImpl`, `PricingController`, `PricingRepository`, `pricesummary` collection
 
@@ -169,7 +221,7 @@ For BillingDashboardModule give me end-to-end call details from UI to API.
 
 **curl:**
 ```bash
-curl -s -X POST http://localhost:8765/ask \
+curl -s -N -X POST http://localhost:8765/ask/stream \
   -H "Content-Type: application/json" \
   -d '{
     "question": "For BillingDashboardModule give me end-to-end call details from UI to API.",
@@ -177,10 +229,27 @@ curl -s -X POST http://localhost:8765/ask \
     "session_id": "t3"
   }' | python3 -c "
 import sys, json
-d = json.load(sys.stdin)
-print('Tools:', [t.get('tool') for t in d.get('tools_used', [])])
+tools = []
+answer = []
+cur_event = ''
+for line in sys.stdin:
+    line = line.rstrip()
+    if line.startswith('event:'):
+        cur_event = line.split(':', 1)[1].strip()
+    elif line.startswith('data:'):
+        data = line.split(':', 1)[1].strip()
+        if cur_event == 'plan':
+            try:
+                tools = json.loads(data).get('tools', [])
+            except Exception:
+                pass
+        elif cur_event not in ('progress', 'done', 'plan'):
+            answer.append(data)
+    elif not line:
+        cur_event = ''
+print('Tools:', tools)
 print()
-print(d.get('answer', ''))
+print(''.join(answer))
 "
 ```
 
@@ -204,7 +273,7 @@ OAuth scopes, and request/response DTO details for each endpoint.
 
 **curl:**
 ```bash
-curl -s -X POST http://localhost:8765/ask \
+curl -s -N -X POST http://localhost:8765/ask/stream \
   -H "Content-Type: application/json" \
   -d '{
     "question": "What does ms-java-appointments call downstream? List all Feign clients with resolved URLs, OAuth scopes, and request/response DTO details for each endpoint.",
@@ -212,10 +281,27 @@ curl -s -X POST http://localhost:8765/ask \
     "session_id": "t4"
   }' | python3 -c "
 import sys, json
-d = json.load(sys.stdin)
-print('Tools:', [t.get('tool') for t in d.get('tools_used', [])])
+tools = []
+answer = []
+cur_event = ''
+for line in sys.stdin:
+    line = line.rstrip()
+    if line.startswith('event:'):
+        cur_event = line.split(':', 1)[1].strip()
+    elif line.startswith('data:'):
+        data = line.split(':', 1)[1].strip()
+        if cur_event == 'plan':
+            try:
+                tools = json.loads(data).get('tools', [])
+            except Exception:
+                pass
+        elif cur_event not in ('progress', 'done', 'plan'):
+            answer.append(data)
+    elif not line:
+        cur_event = ''
+print('Tools:', tools)
 print()
-print(d.get('answer', ''))
+print(''.join(answer))
 "
 ```
 
@@ -243,7 +329,7 @@ request DTO, and response DTO for each.
 
 **curl:**
 ```bash
-curl -s -X POST http://localhost:8765/ask \
+curl -s -N -X POST http://localhost:8765/ask/stream \
   -H "Content-Type: application/json" \
   -d '{
     "question": "What endpoints does ms-java-appointments expose? List HTTP method, path, auth annotation, request DTO, and response DTO for each.",
@@ -251,18 +337,35 @@ curl -s -X POST http://localhost:8765/ask \
     "session_id": "t5"
   }' | python3 -c "
 import sys, json
-d = json.load(sys.stdin)
-print('Tools:', [t.get('tool') for t in d.get('tools_used', [])])
+tools = []
+answer = []
+cur_event = ''
+for line in sys.stdin:
+    line = line.rstrip()
+    if line.startswith('event:'):
+        cur_event = line.split(':', 1)[1].strip()
+    elif line.startswith('data:'):
+        data = line.split(':', 1)[1].strip()
+        if cur_event == 'plan':
+            try:
+                tools = json.loads(data).get('tools', [])
+            except Exception:
+                pass
+        elif cur_event not in ('progress', 'done', 'plan'):
+            answer.append(data)
+    elif not line:
+        cur_event = ''
+print('Tools:', tools)
 print()
-print(d.get('answer', ''))
+print(''.join(answer))
 "
 ```
 
 **Expected tools:** `get_all_endpoints`, `search_deep`
 
-**Expected answer:** 18 endpoints under:
-- `GET /private_api/v1/appointments`, `POST /private_api/v1/appointments/slot-enquiry`, etc. — `AppointmentController`
-- `GET /private_api/v1/multi-appointments/...` — `AppointmentHistoryController`, `MultiAppointmentsController`
+**Expected answer:** 18 endpoints:
+- `GET /private_api/v1/appointments`, `POST /private_api/v1/appointments/slot-enquiry`, etc.
+- `GET /private_api/v1/multi-appointments/...`
 
 With real DTO names: `AppointmentSlotEnquiryInput`, `SlotEnquiryResponse`, etc.
 
@@ -282,7 +385,7 @@ processing methods, their dependencies, and what downstream Feign calls they mak
 
 **curl:**
 ```bash
-curl -s -X POST http://localhost:8765/ask \
+curl -s -N -X POST http://localhost:8765/ask/stream \
   -H "Content-Type: application/json" \
   -d '{
     "question": "What is the business logic in AppointmentServiceImpl in ms-java-appointments? Show the main processing methods, their dependencies, and what downstream Feign calls they make.",
@@ -290,10 +393,27 @@ curl -s -X POST http://localhost:8765/ask \
     "session_id": "t6"
   }' | python3 -c "
 import sys, json
-d = json.load(sys.stdin)
-print('Tools:', [t.get('tool') for t in d.get('tools_used', [])])
+tools = []
+answer = []
+cur_event = ''
+for line in sys.stdin:
+    line = line.rstrip()
+    if line.startswith('event:'):
+        cur_event = line.split(':', 1)[1].strip()
+    elif line.startswith('data:'):
+        data = line.split(':', 1)[1].strip()
+        if cur_event == 'plan':
+            try:
+                tools = json.loads(data).get('tools', [])
+            except Exception:
+                pass
+        elif cur_event not in ('progress', 'done', 'plan'):
+            answer.append(data)
+    elif not line:
+        cur_event = ''
+print('Tools:', tools)
 print()
-print(d.get('answer', ''))
+print(''.join(answer))
 "
 ```
 
