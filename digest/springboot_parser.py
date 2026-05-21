@@ -214,6 +214,16 @@ class SpringBootParser:
         try:
             import javalang
 
+            # Interface declarations — catches @FeignClient interfaces
+            # (Feign clients are always interfaces, never classes)
+            for _, iface_node in tree.filter(javalang.tree.InterfaceDeclaration):
+                if result["class_name"]:
+                    break
+                result["class_name"] = iface_node.name
+                ann_names = {a.name for a in (iface_node.annotations or [])}
+                if "FeignClient" in ann_names:
+                    result["has_feign"] = True
+
             # Class declarations
             for _, cls_node in tree.filter(javalang.tree.ClassDeclaration):
                 if result["class_name"]:
@@ -574,14 +584,16 @@ class SpringBootParser:
         class_body = text[body_start:]
 
         method_pattern = re.compile(
-            # [\s\S]*? inside annotation parens captures multi-line annotation args
+            # Mapping annotation with multi-line args
             r"(@(?:GetMapping|PostMapping|PutMapping|DeleteMapping|PatchMapping|RequestMapping)\(([\s\S]*?)\))"
+            # Skip any other annotations between mapping and method signature (e.g. @Timed, @Override)
             r"(?:\s*@(?!(?:Get|Post|Put|Delete|Patch)Mapping|Rest|Controller|RequestMapping\b)[^\n]*)*\s*"
-            r"(public\s+([A-Za-z0-9_<>, ?]+)\s+([A-Za-z0-9_]+)\s*\((.*?)\))",
+            # Method signature: return type + method name + params (may span multiple lines)
+            r"(public\s+([A-Za-z0-9_<>, ?\[\]]+)\s+([A-Za-z0-9_]+)\s*\(([\s\S]*?)\)(?:\s*\{|\s*throws))",
             re.MULTILINE,
         )
         for m in method_pattern.finditer(class_body):
-            ann_block, ann_args, _, response_type, handler, params = m.groups()
+            ann_block, ann_args, _sig, response_type, handler, params = m.groups()
             # Include 200 chars before the match in class_body to catch @PreAuthorize above the mapping
             context = class_body[max(0, m.start() - 200): m.end()]
             ann_name = re.search(r"@([A-Za-z]+)\(", ann_block)
@@ -930,9 +942,14 @@ class SpringBootParser:
         call_details: list[FeignCallDetail] = []
 
         feign_method_re = re.compile(
-            r"@((?:Get|Post|Put|Delete|Patch)Mapping|RequestMapping)\((.*?)\)\s*"
-            r"(?:@(?!(?:Get|Post|Put|Delete|Patch)Mapping|RequestMapping)\w+[^\n]*\n\s*)*"
-            r"([\w<>?,\[\] ]+?)\s+(\w+)\s*\(([^)]*)\)\s*;",
+            # Annotation: @PostMapping("...") — use [\s\S]*? so multi-line args work
+            r"@((?:Get|Post|Put|Delete|Patch)Mapping|RequestMapping)\(([\s\S]*?)\)\s*"
+            # Skip any other annotations between mapping and method signature
+            r"(?:@(?!(?:Get|Post|Put|Delete|Patch)Mapping|RequestMapping)\w+[\s\S]*?\n\s*)*"
+            # Return type may be on its own line, then method name
+            r"([\w<>?,\[\] \n]+?)\s+(\w+)\s*\("
+            # Params may span multiple lines; [^)]*? stops at closing paren
+            r"([\s\S]*?)\)\s*;",
             re.MULTILINE,
         )
         for fm in feign_method_re.finditer(text):
@@ -1357,19 +1374,39 @@ class SpringBootParser:
         return ""
 
     def _build_constant_map(self) -> dict[str, str]:
-        """Scan all Java files in the project to build ClassName.FIELD → "value" map."""
+        """Scan all Java files in the project to build ClassName.FIELD → "value" map.
+
+        Handles both same-line and next-line value declarations:
+          static final String FOO = "value";
+          static final String FOO =
+                  "value";
+        Also handles Java string concatenation:
+          static final String FOO = "part1"
+                  + "part2";
+        """
         constants: dict[str, str] = {}
         for file in self.project_path.rglob("*.java"):
             text = self._safe_read(file)
             if not text or "static final String" not in text:
                 continue
             cls = self._class_name(text) or ""
+            # Match constant declaration; value may be on the next line
             for m in re.finditer(
                 r'(?:public\s+|protected\s+|private\s+)?'
-                r'(?:static\s+final|final\s+static)\s+String\s+(\w+)\s*=\s*"([^"]*)"',
+                r'(?:static\s+final|final\s+static)\s+String\s+(\w+)\s*='
+                r'\s*"([^"]*)"',  # value on same or next line (whitespace incl. newlines)
                 text,
+                re.DOTALL,
             ):
                 field, value = m.group(1), m.group(2)
+                # Resolve Java string concatenation: "part1" \n + "part2" → "part1part2"
+                # Check for continuation after this match
+                rest = text[m.end():]
+                concat_m = re.match(r'\s*\+\s*"([^"]*)"', rest)
+                while concat_m:
+                    value += concat_m.group(1)
+                    rest = rest[concat_m.end():]
+                    concat_m = re.match(r'\s*\+\s*"([^"]*)"', rest)
                 if cls:
                     constants[f"{cls}.{field}"] = value
                 constants[field] = value   # short form: SITE_BASE_URL → "/api/sites"
