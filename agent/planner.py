@@ -66,7 +66,7 @@ Mode: {mode}
 
 Planning guidelines:
 - "how does [feature/module/flow] work" → describe_feature (strip Module/Component suffix, e.g. BookAppointmentSlotModule → "Book Appointment Slot") + search_deep + get_method_calls (on main ServiceImpl)
-- "end to end" / "UI to API" / "frontend to backend" / "from UI" / "UI to API" / "repositories" questions → describe_feature (extract the feature/module name) + get_method_calls (ServiceImpl) + search_deep("controller endpoints {feature}") + get_external_calls(service-name)
+- "end to end" / "UI to API" / "frontend to backend" / "from UI" / "UI to API" / "repositories" questions → describe_feature (extract the feature/module name) + get_method_calls (ServiceImpl) + search_deep("controller endpoints {{feature}}") + get_external_calls(service-name)
 - "what can a user do" / "what features exist" → list_features + search_deep
 - deep/architecture/flow questions → search_deep + trace_request + get_method_calls (for key service classes)
 - "how does X work" questions      → trace_request + search_deep + get_method_calls (on the main service)
