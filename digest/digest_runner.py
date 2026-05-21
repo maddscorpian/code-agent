@@ -2,25 +2,42 @@ from __future__ import annotations
 
 import json
 import logging
+import os
 import time
 from pathlib import Path
+
+from dotenv import load_dotenv
 
 from .angular_parser import AngularParser
 from .master_digest_builder import MasterDigestBuilder
 from .project_loader import ProjectLoader
 from .springboot_parser import SpringBootParser
 
+load_dotenv()
 logger = logging.getLogger(__name__)
 
-GRAPH_DIR = Path(__file__).resolve().parents[1] / "graph"
+_REPO_ROOT = Path(__file__).resolve().parents[1]
+_data_root_env = os.getenv("AGENT_DATA_ROOT", "")
+_DATA_ROOT = Path(_data_root_env).resolve() if _data_root_env else _REPO_ROOT
+
+GRAPH_DIR = Path(os.getenv("GRAPH_PATH", str(_DATA_ROOT / "graph" / "knowledge_graph.json"))).parent
 GRAPH_FILE = GRAPH_DIR / "knowledge_graph.json"
 
 
 class DigestRunner:
     def __init__(self, config_path: str):
         self.loader = ProjectLoader(config_path)
-        self.output_dir = Path(__file__).resolve().parents[1] / "digests"
+        _digests_env = os.getenv("DIGESTS_PATH", "")
+        self.output_dir = (
+            Path(_digests_env).resolve() if _digests_env and Path(_digests_env).is_absolute()
+            else _DATA_ROOT / (os.getenv("DIGESTS_PATH", "digests"))
+        )
         self.output_dir.mkdir(parents=True, exist_ok=True)
+        _catalog_env = os.getenv("API_CATALOG_PATH", "")
+        self._catalog_dir = (
+            Path(_catalog_env).resolve() if _catalog_env and Path(_catalog_env).is_absolute()
+            else _DATA_ROOT / (os.getenv("API_CATALOG_PATH", "api-catalog"))
+        )
 
     def run_all(self):
         service_digests = []
@@ -121,10 +138,10 @@ class DigestRunner:
     def _build_api_catalog(self) -> None:
         try:
             from digest.api_catalog_builder import ApiCatalogBuilder
-            catalog_dir = Path(__file__).resolve().parents[1] / "api-catalog"
-            catalog = ApiCatalogBuilder(str(self.output_dir), str(catalog_dir)).build()
+            self._catalog_dir.mkdir(parents=True, exist_ok=True)
+            catalog = ApiCatalogBuilder(str(self.output_dir), str(self._catalog_dir)).build()
             total = catalog.get("info", {}).get("x-total-endpoints", "?")
-            logger.info("API catalog built: %s endpoints → %s", total, catalog_dir)
+            logger.info("API catalog built: %s endpoints → %s", total, self._catalog_dir)
         except Exception as exc:
             logger.warning("API catalog build failed (non-fatal): %s", exc)
 

@@ -43,10 +43,11 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-_graph_path = os.getenv("GRAPH_PATH", str(ROOT / "graph" / "knowledge_graph.json"))
-_chroma_path = os.getenv("CHROMA_PATH", str(ROOT / "vector_db"))
-_digests_path = os.getenv("DIGESTS_PATH", str(ROOT / "digests"))
-_projects_config = os.getenv("PROJECTS_CONFIG", str(REPO_ROOT / "projects.yaml"))
+_graph_path       = os.getenv("GRAPH_PATH",       str(ROOT / "graph" / "knowledge_graph.json"))
+_chroma_path      = os.getenv("CHROMA_PATH",      str(ROOT / "vector_db"))
+_digests_path     = os.getenv("DIGESTS_PATH",     str(ROOT / "digests"))
+_api_catalog_path = os.getenv("API_CATALOG_PATH", str(ROOT / "api-catalog"))
+_projects_config  = os.getenv("PROJECTS_CONFIG",  str(REPO_ROOT / "projects.yaml"))
 
 agent_core = AgentCore()
 session_store = SessionStore()
@@ -73,7 +74,7 @@ def chat_ui():
 @app.get("/api-catalog")
 def get_api_catalog():
     """Return the OpenAPI 3.0 catalog generated during last reindex."""
-    catalog_path = ROOT / "api-catalog" / "openapi.json"  # ROOT = AGENT_DATA_ROOT or repo root
+    catalog_path = Path(_api_catalog_path) / "openapi.json"
     if not catalog_path.exists():
         return {"error": "API catalog not built yet. Run POST /reindex first."}
     return json.loads(catalog_path.read_text(encoding="utf-8"))
@@ -83,7 +84,7 @@ def get_api_catalog():
 def get_api_catalog_markdown():
     """Return the Markdown API summary table generated during last reindex."""
     from fastapi.responses import PlainTextResponse
-    md_path = ROOT / "api-catalog" / "api-catalog.md"
+    md_path = Path(_api_catalog_path) / "api-catalog.md"
     if not md_path.exists():
         return PlainTextResponse("API catalog not built yet. Run POST /reindex first.", status_code=404)
     return PlainTextResponse(md_path.read_text(encoding="utf-8"))

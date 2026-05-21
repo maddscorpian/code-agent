@@ -10,15 +10,16 @@ A fully local, offline AI agent for Angular + Spring Boot microservice projects.
 2. [How It Works](#2-how-it-works)
 3. [System Components](#3-system-components)
 4. [Data Artifacts](#4-data-artifacts)
-5. [Install and Setup](#5-install-and-setup)
-6. [Configuration](#6-configuration)
-7. [Running the System](#7-running-the-system)
-8. [Building the Index](#8-building-the-index)
-9. [Using the Chat UI](#9-using-the-chat-ui)
-10. [API Reference](#10-api-reference)
-11. [VS Code Extension](#11-vs-code-extension)
-12. [Sample Prompts](#12-sample-prompts)
-13. [Troubleshooting](#13-troubleshooting)
+5. [Using Pre-Generated Context (Cross-Machine Setup)](#5-using-pre-generated-context-cross-machine-setup)
+6. [Install and Setup](#6-install-and-setup)
+7. [Configuration](#7-configuration)
+8. [Running the System](#8-running-the-system)
+9. [Building the Index](#9-building-the-index)
+10. [Using the Chat UI](#10-using-the-chat-ui)
+11. [API Reference](#11-api-reference)
+12. [VS Code Extension](#12-vs-code-extension)
+13. [Sample Prompts](#13-sample-prompts)
+14. [Troubleshooting](#14-troubleshooting)
 
 ---
 
@@ -352,7 +353,162 @@ Access via API:
 
 ---
 
-## 5. Install and Setup
+## 5. Using Pre-Generated Context (Cross-Machine Setup)
+
+If the source code lives on a **build/CI machine** that has access to all repositories, you can run indexing there and copy the generated context to a **dev machine** (or shared location) where the agent runs. The dev machine needs no access to the source code.
+
+### What to generate and transfer
+
+Four directories are produced during `POST /reindex`. Copy all four:
+
+| Directory | Size (typical) | Contents |
+|---|---|---|
+| `digests/` | 5–50 MB | JSON digests — one per indexed project |
+| `graph/` | 1–10 MB | `knowledge_graph.json` |
+| `vector_db/` | 100–500 MB | ChromaDB embeddings (tied to `OLLAMA_EMBED_MODEL`) |
+| `api-catalog/` | < 1 MB | OpenAPI JSON + markdown catalog |
+
+> **Important:** `vector_db/` is tied to the exact `OLLAMA_EMBED_MODEL` used during indexing. The same model must be available (and set in `.env`) on the receiving machine. Do not change the model between generate and receive.
+
+---
+
+### Step-by-step: Generate context on Machine A
+
+**Machine A** has the source code and Ollama installed.
+
+**1. Clone the agent repo and install dependencies:**
+```bash
+git clone <this-repo> local-ai-agent
+cd local-ai-agent
+pip install -r requirements.txt
+```
+
+**2. Configure `projects.yaml`** — point to the source code paths on Machine A:
+```yaml
+workspace: /path/to/your/codebase
+projects:
+  frontend:
+    - name: pan-portal
+      type: angular
+      path: /path/to/pan-portal
+  services:
+    - name: ms-java-appointments
+      type: spring-boot
+      path: /path/to/ms-java-appointments
+    # ... more services
+```
+
+**3. Configure `.env`** on Machine A — set where generated context should go:
+```env
+OLLAMA_HOST=http://localhost:11434
+OLLAMA_MODEL=deepseek-coder-v2
+OLLAMA_EMBED_MODEL=nomic-embed-text
+PROJECTS_CONFIG=./projects.yaml
+
+# Optional: write context to a dedicated output directory
+AGENT_DATA_ROOT=/path/to/agent-context
+```
+
+**4. Start the server and trigger indexing:**
+```bash
+python -m uvicorn api.server:app --host 0.0.0.0 --port 8765
+curl -X POST http://localhost:8765/reindex -H "Content-Type: application/json" -d '{}'
+```
+
+Wait for the log line: `projects parsed=N endpoints=M entities=K` followed by the embedding progress bar completing.
+
+**5. Verify the output:**
+```bash
+curl http://localhost:8765/graph/summary
+# Should show: Knowledge Graph: NNNN nodes, MMMM edges
+```
+
+**6. Copy the context to a shared location or Machine B:**
+```bash
+# Copy the four generated directories:
+CONTEXT_DIR=/path/to/agent-context   # or AGENT_DATA_ROOT value
+scp -r $CONTEXT_DIR/digests $CONTEXT_DIR/graph $CONTEXT_DIR/vector_db $CONTEXT_DIR/api-catalog  user@machine-b:/shared/agent-context/
+```
+
+Or zip them:
+```bash
+cd /path/to/agent-context
+zip -r agent-context.zip digests/ graph/ vector_db/ api-catalog/
+```
+
+---
+
+### Step-by-step: Use context on Machine B (dev machine)
+
+**Machine B** has Ollama + the agent repo but **no access to source code**.
+
+**1. Clone the agent repo and install dependencies** (same as Machine A step 1).
+
+**2. Pull the same embedding model:**
+```bash
+ollama pull nomic-embed-text    # must match OLLAMA_EMBED_MODEL used on Machine A
+ollama pull deepseek-coder-v2   # LLM for Q&A
+```
+
+**3. Copy or mount the context:**
+```bash
+# If transferred as zip:
+mkdir -p /shared/agent-context
+cd /shared/agent-context
+unzip /path/to/agent-context.zip
+```
+
+**4. Configure `.env` on Machine B:**
+```env
+OLLAMA_HOST=http://localhost:11434
+OLLAMA_MODEL=deepseek-coder-v2
+OLLAMA_EMBED_MODEL=nomic-embed-text   # must match what was used to generate vector_db/
+
+# Point agent at the copied context — no reindex needed:
+AGENT_DATA_ROOT=/shared/agent-context
+
+# PROJECTS_CONFIG is not needed for Q&A-only usage (only for reindex)
+# PROJECTS_CONFIG=./projects.yaml
+```
+
+**5. Start the server — no reindex required:**
+```bash
+python -m uvicorn api.server:app --host 0.0.0.0 --port 8765
+```
+
+**6. Verify the graph loaded correctly:**
+```bash
+curl http://localhost:8765/graph/summary
+# Should show same node/edge counts as Machine A
+```
+
+Open `http://localhost:8765/chat` — the agent is ready to answer questions.
+
+---
+
+### Refreshing context
+
+When the source code changes on Machine A:
+1. Run `POST /reindex` on Machine A
+2. Copy the four directories again to Machine B
+3. Restart the server on Machine B (it reloads the graph on startup)
+
+No other steps are needed — the agent does not need to re-embed or rebuild anything on Machine B.
+
+---
+
+### Troubleshooting cross-machine setup
+
+| Symptom | Cause | Fix |
+|---|---|---|
+| `Knowledge graph is empty` | `AGENT_DATA_ROOT` not set or wrong path | Check the path contains `graph/knowledge_graph.json` |
+| Vector search returns nothing | `OLLAMA_EMBED_MODEL` mismatch | Must be identical on both machines; delete `vector_db/` and re-embed on Machine A with correct model |
+| `API catalog not built yet` | `api-catalog/` not copied | Copy the `api-catalog/` directory from Machine A |
+| `No Feign clients found` | Old digest — generated before parser fix | Re-run `POST /reindex` on Machine A with latest agent code |
+
+---
+
+## 6. Install and Setup
 
 ### Prerequisites
 
@@ -548,7 +704,7 @@ Then open `http://localhost:8765/chat` and ask:
 
 ---
 
-## 6. Configuration
+## 7. Configuration
 
 ### `.env` Reference
 
@@ -556,12 +712,13 @@ Then open `http://localhost:8765/chat` and ask:
 |---|---|---|
 | `OLLAMA_HOST` | `http://localhost:11434` | Ollama API URL |
 | `OLLAMA_MODEL` | `deepseek-coder-v2` | LLM for Q&A and generation |
-| `OLLAMA_EMBED_MODEL` | `nomic-embed-text` | Embedding model — do not change after first index |
-| `PROJECTS_CONFIG` | `./projects.yaml` | Path to projects registry (always relative to repo root) |
-| `AGENT_DATA_ROOT` | _(repo root)_ | Override base directory for all generated data (digests, graph, vector_db). Set to an absolute path to load pre-generated context from another machine. |
-| `CHROMA_PATH` | `./vector_db` | ChromaDB directory — resolved relative to `AGENT_DATA_ROOT` if set |
-| `DIGESTS_PATH` | `./digests` | Digest output directory — resolved relative to `AGENT_DATA_ROOT` if set |
-| `GRAPH_PATH` | `./graph/knowledge_graph.json` | Knowledge graph file — resolved relative to `AGENT_DATA_ROOT` if set |
+| `OLLAMA_EMBED_MODEL` | `nomic-embed-text` | Embedding model — **do not change after first index** |
+| `PROJECTS_CONFIG` | `./projects.yaml` | Path to projects registry (always resolved from repo root) |
+| `AGENT_DATA_ROOT` | _(repo root)_ | **Base directory for all generated context artefacts** (digests, graph, vector_db, api-catalog). Set to an absolute path to load pre-generated context from another machine. |
+| `CHROMA_PATH` | `./vector_db` | ChromaDB directory — relative to `AGENT_DATA_ROOT` by default |
+| `DIGESTS_PATH` | `./digests` | Digest JSON directory — relative to `AGENT_DATA_ROOT` by default |
+| `GRAPH_PATH` | `./graph/knowledge_graph.json` | Knowledge graph file — relative to `AGENT_DATA_ROOT` by default |
+| `API_CATALOG_PATH` | `./api-catalog` | Generated OpenAPI catalog directory — relative to `AGENT_DATA_ROOT` by default |
 | `API_PORT` | `8765` | FastAPI server port |
 | `LOG_LEVEL` | `INFO` | Python logging level (`DEBUG`, `INFO`, `WARNING`) |
 | `TIKTOKEN_CACHE_DIR` | `./tiktoken_cache` | Cache for tiktoken tokeniser files |
@@ -586,7 +743,7 @@ projects:
 
 ---
 
-## 7. Running the System
+## 8. Running the System
 
 ### Start the API Server
 
@@ -608,7 +765,7 @@ The watcher debounces 2 seconds after the last change, then re-digests and re-em
 
 ---
 
-## 8. Building the Index
+## 9. Building the Index
 
 ### Full Reindex
 
@@ -653,7 +810,7 @@ Edge types: uses_service=253, part_of_feature=200+, feature_calls=80+,
 
 ---
 
-## 9. Using the Chat UI
+## 10. Using the Chat UI
 
 Open `http://localhost:8765/chat` in your browser.
 
@@ -728,7 +885,7 @@ Clicking **Apply** sends the diff to `POST /apply`. The server validates the pat
 
 ---
 
-## 10. API Reference
+## 11. API Reference
 
 Base URL: `http://localhost:8765`
 
@@ -811,7 +968,7 @@ data: <session-uuid>
 
 ---
 
-## 11. VS Code Extension
+## 12. VS Code Extension
 
 The extension provides in-editor chat, CodeLens, and right-click commands. It is a thin client — all AI work runs in the backend.
 
@@ -848,7 +1005,7 @@ The extension connects to `http://localhost:8765` by default. The API server mus
 
 ---
 
-## 12. Sample Prompts
+## 13. Sample Prompts
 
 > The chat UI has a built-in **📋 Prompts** panel with 50 ready-to-use templates. Click the button in the toolbar — no need to type these from scratch.
 
@@ -940,7 +1097,7 @@ What happens when a Feign call fails in ms-java-order? Is there a circuit breake
 
 ---
 
-## 13. Troubleshooting
+## 14. Troubleshooting
 
 ### `"ollama": false` in health check
 
