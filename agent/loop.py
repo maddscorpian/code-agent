@@ -144,10 +144,10 @@ Structure (only include layers that appear in the gathered context above):
    - Angular service: HTTP method + URL exactly as shown in sources
    - Base class pattern if mentioned in sources
 
-3. Controller layer (only if a [Gathered N] block names this controller and endpoint)
+3. Controller layer (populated from "[Spring Endpoints]" section in gathered context)
    - Controller class name and project exactly as in sources
    - Endpoint path exactly as in sources
-   - Auth annotation context exactly as in sources
+   - Auth annotation context exactly as in sources (public/secured/entitlement:xxx)
    - Request/Response DTO names exactly as in sources
 
 4. Strategy/Delegate layer (only if strategyFactory or Delegate class appears in sources)

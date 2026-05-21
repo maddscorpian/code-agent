@@ -39,6 +39,7 @@ class AgentCore:
                 model=self.rag.model,
                 base_url=self.rag.base_url,
                 num_ctx=8192,
+                num_predict=4096,   # ensure long answers (all Feign clients, full tables)
                 temperature=0.15,
                 top_p=0.95,
             )

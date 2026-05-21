@@ -369,7 +369,7 @@ class GraphStore:
                         seen_ep_ids.add(ep["id"])
                         endpoint_nodes.append(ep)
         if endpoint_nodes:
-            lines.append("\n[Spring Endpoints]")
+            lines.append("\n[Controller Layer — Spring Endpoints]")
             for ep in endpoint_nodes[:8]:
                 auth_str = ""
                 if ep.get("auth_required"):
