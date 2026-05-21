@@ -21,68 +21,60 @@ curl -s http://localhost:8765/graph/summary | python3 -m json.tool
 
 ### Option A — Chat UI (recommended, shows tools visually)
 
-Open `http://localhost:8765/chat` in a browser.
+Open `http://localhost:8765/chat` in a browser. The "Gathered via: [tool1, tool2, ...]"
+strip above each response shows which tools ran. Paste each question, set the mode, send.
 
-The "Gathered via: [tool1, tool2, ...]" strip above each response shows exactly which
-tools ran. Paste each question below, set the mode, and send.
+### Option B — curl to /ask (non-streaming, returns full JSON)
 
-### Option B — curl with full output (tools + answer)
-
-Use a heredoc to avoid all shell quoting issues:
+Pipe curl output directly to `python3 -c "..."`. Use double quotes for the `-c` argument —
+single quotes inside a double-quoted shell string are valid and do not need escaping.
+Do NOT use heredoc (`<< 'PYEOF'`) — it conflicts with the pipe for stdin.
 
 ```bash
 curl -s -X POST http://localhost:8765/ask \
   -H "Content-Type: application/json" \
-  -d '{ "question": "...", "mode": "deep", "session_id": "t1" }' \
-  | python3 << 'PYEOF'
+  -d '{"question": "...", "mode": "deep", "session_id": "t1"}' \
+  | python3 -c "
 import sys, json
 d = json.load(sys.stdin)
-tools = d.get('tools_used', [])
-print('=== Tools used ===')
-if tools:
-    for t in tools:
-        print('  ' + t.get('tool', '') + '  input: ' + str(t.get('input', '')))
-else:
-    print('  NONE — AgentLoop failed, check server log for AgentLoop.run failed')
+tools = [t.get('tool') for t in d.get('tools_used', [])]
+print('Tools:', tools if tools else 'NONE - check server log for AgentLoop.run failed')
 print()
-print('=== Answer ===')
 print(d.get('answer', ''))
-PYEOF
+"
 ```
 
-### Option C — Streaming (shows tool progress in real time)
+### Option C — curl to /ask/stream (streaming, shows tool progress in real time)
 
 ```bash
 curl -s -N -X POST http://localhost:8765/ask/stream \
   -H "Content-Type: application/json" \
-  -d '{ "question": "...", "mode": "deep", "session_id": "t1" }' \
-  | grep --line-buffered -E "^event:|^data:" | head -30
+  -d '{"question": "...", "mode": "deep", "session_id": "t1"}' \
+  | grep --line-buffered -E "^event:|^data:"
 ```
 
-Prints `event: progress` (which tool is running) and `event: plan` (tools selected).
+Prints `event: progress` lines showing each tool as it runs, then `event: plan` showing
+which tools were selected, then the answer tokens as `data:` lines.
 
 ---
 
 ## Sanity check — is the AgentLoop working?
 
-Run this first. Tools must not be empty.
+Run this before the test cases. Tools must not be empty.
 
 ```bash
 curl -s -X POST http://localhost:8765/ask \
   -H "Content-Type: application/json" \
   -d '{"question":"What services make up this platform?","mode":"chat","session_id":"sanity"}' \
-  | python3 << 'PYEOF'
+  | python3 -c "
 import sys, json
 d = json.load(sys.stdin)
-tools = [t.get('tool', '') for t in d.get('tools_used', [])]
-if tools:
-    print('PASS — Tools:', tools)
-else:
-    print('FAIL — Tools empty. Run: git pull && restart server')
-PYEOF
+tools = [t.get('tool') for t in d.get('tools_used', [])]
+print('PASS - Tools:', tools) if tools else print('FAIL - Tools empty. Run: git pull && restart server')
+"
 ```
 
-**Expected:** `PASS — Tools: ['search_codebase']` or similar.
+**Expected:** `PASS - Tools: ['search_codebase']` or similar.
 
 ---
 
@@ -105,13 +97,13 @@ curl -s -X POST http://localhost:8765/ask \
     "question": "For BookAppointmentSlotModule give me end-to-end call details from UI to API to repositories. Include Angular component, Angular service, HTTP URL, controller, service impl, downstream Feign calls, MongoDB collection.",
     "mode": "deep",
     "session_id": "t1"
-  }' | python3 << 'PYEOF'
+  }' | python3 -c "
 import sys, json
 d = json.load(sys.stdin)
-print('Tools:', [t.get('tool', '') for t in d.get('tools_used', [])])
+print('Tools:', [t.get('tool') for t in d.get('tools_used', [])])
 print()
 print(d.get('answer', ''))
-PYEOF
+"
 ```
 
 **Expected tools:** `describe_feature`, `get_method_calls`, `search_deep`, `get_external_calls`
@@ -146,13 +138,13 @@ curl -s -X POST http://localhost:8765/ask \
     "question": "For PricingSummaryModule give me end-to-end call details from UI to API to repositories. Angular component to Angular service to HTTP URL to controller to service impl to MongoDB and any Feign downstream calls.",
     "mode": "deep",
     "session_id": "t2"
-  }' | python3 << 'PYEOF'
+  }' | python3 -c "
 import sys, json
 d = json.load(sys.stdin)
-print('Tools:', [t.get('tool', '') for t in d.get('tools_used', [])])
+print('Tools:', [t.get('tool') for t in d.get('tools_used', [])])
 print()
 print(d.get('answer', ''))
-PYEOF
+"
 ```
 
 **Expected tools:** `describe_feature`, `search_deep`, `get_method_calls`
@@ -160,7 +152,7 @@ PYEOF
 **Expected answer contains:**
 - Angular: `PricingSummaryComponent → TenancyService → GET v1/tenancies`
 - Backend: `TenancyServiceImpl` in `ms-java-tenancy`, methods `createTenancy`, `getTenancyData`, `getAllTenanciesList`
-- Context gap stated for controller layer (no direct http_call edge in graph for this feature)
+- Context gap stated for controller layer (no http_call edge for this feature in the graph)
 
 **Fail signs:** Invents `PricingSummaryServiceImpl`, `PricingController`, `PricingRepository`, `pricesummary` collection
 
@@ -183,13 +175,13 @@ curl -s -X POST http://localhost:8765/ask \
     "question": "For BillingDashboardModule give me end-to-end call details from UI to API.",
     "mode": "deep",
     "session_id": "t3"
-  }' | python3 << 'PYEOF'
+  }' | python3 -c "
 import sys, json
 d = json.load(sys.stdin)
-print('Tools:', [t.get('tool', '') for t in d.get('tools_used', [])])
+print('Tools:', [t.get('tool') for t in d.get('tools_used', [])])
 print()
 print(d.get('answer', ''))
-PYEOF
+"
 ```
 
 **Expected tools:** `describe_feature`, `search_deep`
@@ -218,13 +210,13 @@ curl -s -X POST http://localhost:8765/ask \
     "question": "What does ms-java-appointments call downstream? List all Feign clients with resolved URLs, OAuth scopes, and request/response DTO details for each endpoint.",
     "mode": "chat",
     "session_id": "t4"
-  }' | python3 << 'PYEOF'
+  }' | python3 -c "
 import sys, json
 d = json.load(sys.stdin)
-print('Tools:', [t.get('tool', '') for t in d.get('tools_used', [])])
+print('Tools:', [t.get('tool') for t in d.get('tools_used', [])])
 print()
 print(d.get('answer', ''))
-PYEOF
+"
 ```
 
 **Expected tools:** `get_external_calls`, `search_deep`
@@ -257,13 +249,13 @@ curl -s -X POST http://localhost:8765/ask \
     "question": "What endpoints does ms-java-appointments expose? List HTTP method, path, auth annotation, request DTO, and response DTO for each.",
     "mode": "chat",
     "session_id": "t5"
-  }' | python3 << 'PYEOF'
+  }' | python3 -c "
 import sys, json
 d = json.load(sys.stdin)
-print('Tools:', [t.get('tool', '') for t in d.get('tools_used', [])])
+print('Tools:', [t.get('tool') for t in d.get('tools_used', [])])
 print()
 print(d.get('answer', ''))
-PYEOF
+"
 ```
 
 **Expected tools:** `get_all_endpoints`, `search_deep`
@@ -296,13 +288,13 @@ curl -s -X POST http://localhost:8765/ask \
     "question": "What is the business logic in AppointmentServiceImpl in ms-java-appointments? Show the main processing methods, their dependencies, and what downstream Feign calls they make.",
     "mode": "deep",
     "session_id": "t6"
-  }' | python3 << 'PYEOF'
+  }' | python3 -c "
 import sys, json
 d = json.load(sys.stdin)
-print('Tools:', [t.get('tool', '') for t in d.get('tools_used', [])])
+print('Tools:', [t.get('tool') for t in d.get('tools_used', [])])
 print()
 print(d.get('answer', ''))
-PYEOF
+"
 ```
 
 **Expected tools:** `get_method_implementation`, `get_method_calls`, `search_deep`
