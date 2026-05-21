@@ -606,6 +606,13 @@ class SpringBootParser:
             method_path = self._extract_path_from_mapping_args(ann_args)
             full_path = self._join_paths(class_base, method_path)
             request_dto = self._extract_request_body_type(params)
+            # Unwrap ResponseEntity<X> / List<X> / Optional<X> wrappers
+            resp_type = response_type.strip()
+            for wrapper in ("ResponseEntity", "List", "Optional", "Mono", "Flux", "Set"):
+                inner_m = re.match(rf"^{wrapper}<(.+)>$", resp_type)
+                if inner_m:
+                    resp_type = inner_m.group(1).strip()
+                    break
             roles = self._extract_roles(context)
             # Standard Spring Security annotations
             auth_required = bool(roles) or "@PreAuthorize" in context or "@Secured" in context
@@ -629,7 +636,7 @@ class SpringBootParser:
                     controller=controller_name,
                     handler=handler,
                     request_dto=request_dto,
-                    response_dto=response_type.strip(),
+                    response_dto=resp_type,
                     auth_required=auth_required,
                     roles=roles,
                     javadoc=javadoc,
@@ -1014,13 +1021,14 @@ class SpringBootParser:
             if not text:
                 return
             if file.suffix in (".yml", ".yaml"):
-                for pm in re.finditer(r"^([\w.\-]+)\s*:\s*([^\n#]+)", text, re.MULTILINE):
+                for pm in re.finditer(r"^([\w.\-]+)[ \t]*:[ \t]*([^\n#]+)", text, re.MULTILINE):
                     key = pm.group(1).strip()
                     val = pm.group(2).strip().strip("'\"")
                     if val and not val.startswith("{"):
                         props[key] = val
             else:
-                for pm in re.finditer(r"^([\w.\-]+)\s*[=:]\s*([^\n#]+)", text, re.MULTILINE):
+                # Use [ \t]* (not \s*) so empty-value properties don't span into the next line
+                for pm in re.finditer(r"^([\w.\-]+)[ \t]*[=:][ \t]*([^\n#]+)", text, re.MULTILINE):
                     key = pm.group(1).strip()
                     val = pm.group(2).strip()
                     if val:
@@ -1414,7 +1422,8 @@ class SpringBootParser:
 
     @staticmethod
     def _extract_request_body_type(params: str) -> str | None:
-        m = re.search(r"@RequestBody\s+([A-Za-z0-9_<>]+)", params)
+        # Skip @Valid, final, and other modifiers before the DTO type name
+        m = re.search(r"@RequestBody\s+(?:@\w+\s+)*(?:final\s+)?([A-Za-z]\w*(?:<[^>]+>)?)\s+\w", params)
         return m.group(1) if m else None
 
     @staticmethod

@@ -418,19 +418,30 @@ class GraphBuilder:
     def _find_endpoint_fuzzy(self, nodes: dict, method: str, path: str,
                              prefer_project: str = "") -> str | None:
         norm_path = self._norm_path(path)
+
+        def _matches(node_path: str) -> bool:
+            """Exact match or suffix match to handle prefix differences like /private_api/."""
+            np = self._norm_path(node_path)
+            if np == norm_path:
+                return True
+            # Allow one side to be a suffix of the other (strips versioning prefixes)
+            if np.endswith(norm_path) or norm_path.endswith(np):
+                return True
+            return False
+
         # Prefer matching project first
         for nid, node in nodes.items():
             if node.get("type") != "endpoint":
                 continue
             if prefer_project and node.get("project") != prefer_project:
                 continue
-            if node.get("method") == method and self._norm_path(node.get("path", "")) == norm_path:
+            if node.get("method") == method and _matches(node.get("path", "")):
                 return nid
         # Any project
         for nid, node in nodes.items():
             if node.get("type") != "endpoint":
                 continue
-            if node.get("method") == method and self._norm_path(node.get("path", "")) == norm_path:
+            if node.get("method") == method and _matches(node.get("path", "")):
                 return nid
         return None
 

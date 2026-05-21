@@ -97,7 +97,7 @@ question → Planner LLM call (picks 3–6 tools)
 
 **MongoTemplate query capture (`digest/springboot_parser.py`):** `_parse_repository_queries()` detects `mongoTemplate.find/update/remove(...)` calls and extracts `Criteria.where("field")` chains as `[mongoTemplate.find] Entity WHERE field = ? AND ...` descriptions. These custom repository implementations don't use `@Query` annotations.
 
-**Multi-file property loading (`_build_properties_map`):** After loading primary config files, follows `spring.config.import=optional:classpath:filename` entries to load additional property files from `src/main/resources/`. This is required for `client-api.xxx.baseurl` Feign URLs that may be defined in imported files.
+**Multi-file property loading (`_build_properties_map`):** After loading primary config files, follows `spring.config.import=optional:classpath:filename` entries to load additional property files from `src/main/resources/`. This is required for `client-api.xxx.baseurl` Feign URLs that may be defined in imported files. The regex uses `[ \t]*` (NOT `\s*`) around `=`/`:` separators so that empty-value properties (e.g. `oauth.issuer.scope=\n`) do not absorb the following line as their value — `\s*` would span the newline and corrupt the next property's key into the preceding property's value.
 
 **Custom auth annotations (`_parse_controllers`, `_parse_feign`):** `@EntitlementOrRoleBasedAuthorisation(context="...")` sets `auth_required=True` and appends `entitlement:<context>` to roles. `@RestrictedAPIAccess` sets `auth_required=True`. `@AuthorizationToken(scope="...")` on Feign clients is parsed and the scope stored in `FeignClientDigest.oauth_scope`.
 
@@ -112,6 +112,10 @@ question → Planner LLM call (picks 3–6 tools)
 **SpEL + property resolution for Kafka:** `@KafkaListener(topics = "#{'${spring.kafka.consumer.topic}'}")` — the `_resolve()` helper in `_parse_events()` handles SpEL wrappers `#{...}`, strips inner `'...'` string quotes, then resolves `${prop}` against `_properties` (loaded from `application.properties`).
 
 **Feign URL resolution:** `_build_properties_map()` loads `application.properties`/`.yml`. Feign `url = "${ms-java.appointments.url}"` is resolved to the actual host value during `_parse_feign()`.
+
+**Endpoint DTO extraction (`digest/springboot_parser.py`):** `_extract_request_body_type()` uses `@RequestBody\s+(?:@\w+\s+)*(?:final\s+)?` to skip modifiers (`@Valid`, `final`) before capturing the DTO class name. `_parse_controllers()` unwraps `ResponseEntity<X>` / `List<X>` / `Optional<X>` from the return type before storing `response_dto` — same unwrapping already done for Feign clients.
+
+**Graph endpoint suffix matching (`graph/graph_builder.py`):** `_find_endpoint_fuzzy()` uses suffix matching after the exact `_norm_path` match fails — if either normalized path ends with the other, the match succeeds. This handles Angular services that use paths like `v1/appointments` matching Spring endpoints at `/private_api/v1/appointments` without requiring the caller to know the API gateway prefix.
 
 **Planner fallback (`agent/planner.py`):** If the LLM returns invalid JSON, `_default_plan()` applies keyword rules. Adding a new tool requires: (1) function + registration in `agent/tools.py`, (2) entry in `TOOL_CATALOGUE` in `agent/planner.py`, (3) planning guideline in `PLANNER_PROMPT`. New use-case routing added: "api reference/documentation/contract" → `get_all_endpoints + get_dto_schema + get_external_calls`; "data model/schema/collections" → `get_entity_schema + search_deep`; "business logic/what happens when/logic in" → `get_method_implementation + get_method_calls + search_deep`; end-to-end deep mode questions also call `get_external_calls` to expose the full Feign downstream layer.
 

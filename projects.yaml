@@ -1,25 +1,98 @@
-workspace: /home/user/projects
+workspace: /Users/maddmachine/work/samplee2eproject
 
 projects:
   frontend:
-    - name: fe-app
+    - name: pan-portal
       type: angular
-      path: /home/user/projects/fe-app
-
+      path: /Users/maddmachine/work/samplee2eproject/fe/pan-portal
   services:
-    - name: user-service
+    - name: module-java-connpex-parent
       type: spring-boot
-      path: /home/user/projects/user-service
-      port: 8081
-    - name: order-service
+      path: /Users/maddmachine/work/samplee2eproject/be/module-java-connpex-parent
+    - name: module-java-logging
       type: spring-boot
-      path: /home/user/projects/order-service
-      port: 8082
-    - name: payment-service
+      path: /Users/maddmachine/work/samplee2eproject/be/module-java-logging
+    - name: module-java-product-definition
       type: spring-boot
-      path: /home/user/projects/payment-service
-      port: 8083
-    - name: api-gateway
+      path: /Users/maddmachine/work/samplee2eproject/be/module-java-product-definition
+    - name: module-java-security
       type: spring-boot
-      path: /home/user/projects/api-gateway
-      port: 8080
+      path: /Users/maddmachine/work/samplee2eproject/be/module-java-security
+    - name: module-java-utils
+      type: spring-boot
+      path: /Users/maddmachine/work/samplee2eproject/be/module-java-utils
+    - name: ms-java-activitylog
+      type: spring-boot
+      path: /Users/maddmachine/work/samplee2eproject/be/ms-java-activitylog
+    - name: ms-java-address
+      type: spring-boot
+      path: /Users/maddmachine/work/samplee2eproject/be/ms-java-address
+    - name: ms-java-appointments
+      type: spring-boot
+      path: /Users/maddmachine/work/samplee2eproject/be/ms-java-appointments
+    - name: ms-java-callback-handler
+      type: spring-boot
+      path: /Users/maddmachine/work/samplee2eproject/be/ms-java-callback-handler
+    - name: ms-java-connectivity
+      type: spring-boot
+      path: /Users/maddmachine/work/samplee2eproject/be/ms-java-connectivity
+    - name: ms-java-contacts
+      type: spring-boot
+      path: /Users/maddmachine/work/samplee2eproject/be/ms-java-contacts
+    - name: ms-java-customers
+      type: spring-boot
+      path: /Users/maddmachine/work/samplee2eproject/be/ms-java-customers
+    - name: ms-java-discovery-service
+      type: spring-boot
+      path: /Users/maddmachine/work/samplee2eproject/be/ms-java-discovery-service
+    - name: ms-java-event-scheduler
+      type: spring-boot
+      path: /Users/maddmachine/work/samplee2eproject/be/ms-java-event-scheduler
+    - name: ms-java-external-inspection
+      type: spring-boot
+      path: /Users/maddmachine/work/samplee2eproject/be/ms-java-external-inspection
+    - name: ms-java-identity
+      type: spring-boot
+      path: /Users/maddmachine/work/samplee2eproject/be/ms-java-identity
+    - name: ms-java-notifications
+      type: spring-boot
+      path: /Users/maddmachine/work/samplee2eproject/be/ms-java-notifications
+    - name: ms-java-order
+      type: spring-boot
+      path: /Users/maddmachine/work/samplee2eproject/be/ms-java-order
+    - name: ms-java-product
+      type: spring-boot
+      path: /Users/maddmachine/work/samplee2eproject/be/ms-java-product
+    - name: ms-java-product-catalogue
+      type: spring-boot
+      path: /Users/maddmachine/work/samplee2eproject/be/ms-java-product-catalogue
+    - name: ms-java-product-instance
+      type: spring-boot
+      path: /Users/maddmachine/work/samplee2eproject/be/ms-java-product-instance
+    - name: ms-java-product-inventory
+      type: spring-boot
+      path: /Users/maddmachine/work/samplee2eproject/be/ms-java-product-inventory
+    - name: ms-java-sdwan
+      type: spring-boot
+      path: /Users/maddmachine/work/samplee2eproject/be/ms-java-sdwan
+    - name: ms-java-sites
+      type: spring-boot
+      path: /Users/maddmachine/work/samplee2eproject/be/ms-java-sites
+    - name: ms-java-solution
+      type: spring-boot
+      path: /Users/maddmachine/work/samplee2eproject/be/ms-java-solution
+    - name: ms-java-support-request
+      type: spring-boot
+      path: /Users/maddmachine/work/samplee2eproject/be/ms-java-support-request
+    - name: ms-java-tenancy
+      type: spring-boot
+      path: /Users/maddmachine/work/samplee2eproject/be/ms-java-tenancy
+    - name: ms-java-usage-generation
+      type: spring-boot
+      path: /Users/maddmachine/work/samplee2eproject/be/ms-java-usage-generation
+    - name: ms-java-workflow
+      type: spring-boot
+      path: /Users/maddmachine/work/samplee2eproject/be/ms-java-workflow
+    - name: pan-specs
+      type: spring-boot
+      path: /Users/maddmachine/work/samplee2eproject/be/pan-specs
